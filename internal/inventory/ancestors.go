@@ -105,6 +105,10 @@ func (c *Client) CollectAncestorIAM(ctx context.Context, snap *Snapshot, scopes 
 	metadata := map[string]Object{}
 	policySeen := map[string]bool{}
 	for _, root := range scopes {
+		if !c.IncludeSystemProjects && strings.HasPrefix(root, "projects/sys-") {
+			c.recordSystemProjectExclusion(snap, root)
+			continue
+		}
 		seen := map[string]bool{}
 		scope := root
 		for scope != "" {
@@ -134,6 +138,10 @@ func (c *Client) CollectAncestorIAM(ctx context.Context, snap *Snapshot, scopes 
 				metadata[name] = d
 			}
 			name := Str(d["name"])
+			if !c.IncludeSystemProjects && strings.HasPrefix(name, "projects/") && strings.HasPrefix(Str(d["projectId"]), "sys-") {
+				c.recordSystemProjectExclusion(snap, name)
+				break
+			}
 			parent := Str(d["parent"])
 			isOrg := strings.HasPrefix(name, "organizations/")
 			if (isOrg && parent != "") || (!isOrg && parent != "" && (!logScopePattern.MatchString(parent) || strings.HasPrefix(parent, "projects/"))) || (strings.HasPrefix(name, "folders/") && parent == "") {

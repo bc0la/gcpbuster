@@ -115,6 +115,11 @@ func (c *Client) viewerContainer(ctx context.Context, out *Snapshot, container s
 	if err != nil {
 		return viewerProject{}
 	}
+	// Defense in depth if hierarchy discovery supplied incomplete project IDs.
+	if project && !c.IncludeSystemProjects && strings.HasPrefix(Str(d["projectId"]), "sys-") {
+		c.recordSystemProjectExclusion(out, container)
+		return viewerProject{}
+	}
 	kind := "Project"
 	if strings.HasPrefix(container, "folders/") {
 		kind = "Folder"

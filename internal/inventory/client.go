@@ -29,6 +29,7 @@ type Client struct {
 	PerProjectConcurrency int            // Optional per-project cap within the global worker limit.
 	Progress              func(ProgressEvent)
 	CollectionCheckpoint  CollectionCheckpoint // Optional private, configuration-bound metadata resume store.
+	IncludeSystemProjects bool                 // Include project IDs starting sys-; excluded by default.
 	progressMu            sync.Mutex
 	rateLimitMu           sync.Mutex
 	rateLimits            map[string]time.Time

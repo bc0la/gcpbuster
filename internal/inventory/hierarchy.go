@@ -14,6 +14,7 @@ import (
 func (c *Client) ExpandResourceScopes(ctx context.Context, snap *Snapshot, scopes []string) []string {
 	queue := append([]string(nil), scopes...)
 	seen := map[string]bool{}
+	projectIDs := map[string]string{}
 	var out []string
 	for len(queue) > 0 {
 		parent := queue[0]
@@ -26,10 +27,31 @@ func (c *Client) ExpandResourceScopes(ctx context.Context, snap *Snapshot, scope
 			snap.record("resource-hierarchy:scope", 0, fmt.Errorf("invalid resource container"))
 			continue
 		}
-		out = append(out, parent)
 		if strings.HasPrefix(parent, "projects/") {
+			id := strings.TrimPrefix(parent, "projects/")
+			if !c.IncludeSystemProjects {
+				if known := projectIDs[parent]; known != "" {
+					id = known
+				} else if projectNumberPattern.MatchString(parent) {
+					metadata, err := c.get(ctx, "https://cloudresourcemanager.googleapis.com/v3/"+parent, url.Values{"fields": {"name,projectId"}})
+					if err != nil || Str(metadata["name"]) != parent || !viewerResourceName.MatchString(Str(metadata["projectId"])) {
+						if err == nil {
+							err = fmt.Errorf("invalid project identity for exclusion check")
+						}
+						snap.record("project-exclusion-identity:"+parent, 0, err)
+						continue
+					}
+					id = Str(metadata["projectId"])
+				}
+				if strings.HasPrefix(id, "sys-") {
+					c.recordSystemProjectExclusion(snap, parent)
+					continue
+				}
+			}
+			out = append(out, parent)
 			continue
 		}
+		out = append(out, parent)
 		if err := ctx.Err(); err != nil {
 			snap.record("resource-hierarchy:"+parent, 0, err)
 			break
@@ -37,7 +59,7 @@ func (c *Client) ExpandResourceScopes(ctx context.Context, snap *Snapshot, scope
 		for _, kind := range []string{"projects", "folders"} {
 			start := time.Now()
 			c.ReportProgress(ProgressEvent{Phase: "hierarchy", Scope: parent, Collector: kind, Status: "started"})
-			children, err := c.hierarchyChildren(ctx, parent, kind)
+			children, err := c.hierarchyChildrenWithProjects(ctx, parent, kind, projectIDs, snap)
 			status := "completed"
 			if err != nil {
 				status = "failed"
@@ -51,6 +73,10 @@ func (c *Client) ExpandResourceScopes(ctx context.Context, snap *Snapshot, scope
 }
 
 func (c *Client) hierarchyChildren(ctx context.Context, parent, kind string) ([]string, error) {
+	return c.hierarchyChildrenWithProjects(ctx, parent, kind, nil, nil)
+}
+
+func (c *Client) hierarchyChildrenWithProjects(ctx context.Context, parent, kind string, projectIDs map[string]string, snap *Snapshot) ([]string, error) {
 	q := url.Values{"parent": {parent}, "pageSize": {"100"}, "showDeleted": {"false"}}
 	var out []string
 	seen := map[string]bool{}
@@ -75,6 +101,16 @@ func (c *Client) hierarchyChildren(ctx context.Context, parent, kind string) ([]
 			}
 			switch Str(child["state"]) {
 			case "ACTIVE":
+				if kind == "projects" {
+					id := Str(child["projectId"])
+					if projectIDs != nil && viewerResourceName.MatchString(id) {
+						projectIDs[name] = id
+					}
+					if !c.IncludeSystemProjects && strings.HasPrefix(id, "sys-") {
+						c.recordSystemProjectExclusion(snap, name)
+						continue
+					}
+				}
 				out = append(out, name)
 			case "DELETE_REQUESTED": // Not a currently active assessment target.
 			default:
@@ -97,4 +133,11 @@ func (c *Client) hierarchyChildren(ctx context.Context, parent, kind string) ([]
 		seen[next] = true
 		q.Set("pageToken", next)
 	}
+}
+
+func (c *Client) recordSystemProjectExclusion(snap *Snapshot, scope string) {
+	if snap != nil {
+		snap.Coverage = append(snap.Coverage, Coverage{Source: "project-exclusion:" + scope, Status: "skipped", Error: "Project ID starts with sys- and is excluded by default. This naming heuristic is not proof of an Apps Script project; use --include-system-projects to include it."})
+	}
+	c.ReportProgress(ProgressEvent{Phase: "project", Scope: scope, Status: "excluded", Reason: "sys- project ID prefix; include-system-projects overrides"})
 }

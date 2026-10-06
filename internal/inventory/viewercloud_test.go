@@ -201,7 +201,7 @@ func TestViewerCloudHierarchyStaysWithinSelectedRoot(t *testing.T) {
 			if r.URL.Query().Get("parent") != "folders/9" {
 				t.Fatal(r.URL)
 			}
-			return response(200, `{"projects":[{"name":"projects/123","parent":"folders/9","state":"ACTIVE"}]}`), nil
+			return response(200, `{"projects":[{"name":"projects/123","projectId":"demo","parent":"folders/9","state":"ACTIVE"}]}`), nil
 		case "cloudresourcemanager.googleapis.com/v3/folders":
 			return response(200, `{}`), nil
 		case "cloudresourcemanager.googleapis.com/v3/folders/9":

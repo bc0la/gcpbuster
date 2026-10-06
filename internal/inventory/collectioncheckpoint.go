@@ -34,10 +34,10 @@ func checkpointComplete(s Snapshot) bool {
 	}
 	hasSuccess := false
 	for _, row := range s.Coverage {
-		if row.Status != "ok" && row.Status != "notice" {
+		if row.Status != "ok" && row.Status != "completed" && row.Status != "notice" {
 			return false
 		}
-		hasSuccess = hasSuccess || row.Status == "ok"
+		hasSuccess = hasSuccess || row.Status == "ok" || row.Status == "completed"
 	}
 	return hasSuccess
 }

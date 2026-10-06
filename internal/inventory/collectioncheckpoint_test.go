@@ -3,7 +3,9 @@ package inventory
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -100,5 +102,34 @@ func TestCollectionCheckpointRejectsFailuresAndTransientSecrets(t *testing.T) {
 		if checkpointFamily(family) {
 			t.Fatalf("secret-bearing/unknown family cached: %s", family)
 		}
+	}
+}
+
+func TestCollectionCheckpointRealCompletedCollectorResume(t *testing.T) {
+	store := &memoryCollectionCheckpoint{rows: map[string][]byte{}}
+	var buckets atomic.Int32
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host + r.URL.Path {
+		case "cloudresourcemanager.googleapis.com/v3/projects/demo":
+			return response(200, `{"name":"projects/123","projectId":"demo","parent":"organizations/9"}`), nil
+		case "cloudresourcemanager.googleapis.com/v3/projects/123:getIamPolicy":
+			return response(200, `{"bindings":[]}`), nil
+		case "storage.googleapis.com/storage/v1/b":
+			buckets.Add(1)
+			return response(200, `{"items":[]}`), nil
+		default:
+			return response(404, `{}`), nil
+		}
+	})
+	c.CollectionCheckpoint = store
+	c.SecretCapture = NewSecretCapture(0, 0, 0)
+	for i := 0; i < 2; i++ {
+		c.ViewerCloud(context.Background(), "projects/demo")
+	}
+	if buckets.Load() != 1 {
+		t.Fatalf("successful real collector was not resumed: %d reads", buckets.Load())
+	}
+	if _, found := store.rows["projects/123 (demo)|storage"]; !found {
+		t.Fatal("real completed status was not saved")
 	}
 }

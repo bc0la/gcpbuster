@@ -25,14 +25,15 @@ func checkpointKey(scope, family string) string {
 	return "collection_checkpoint:" + hex.EncodeToString(sum[:])
 }
 
-func newCollectionCheckpoint(ctx context.Context, e *engagement.Engagement, scopes []string, capture, redacted, dns, refresh, resume bool) (*collectionCheckpoint, error) {
+func newCollectionCheckpoint(ctx context.Context, e *engagement.Engagement, scopes []string, capture, redacted, dns, refresh, resume bool, includeSystem ...bool) (*collectionCheckpoint, error) {
 	ordered := append([]string(nil), scopes...)
 	sort.Strings(ordered)
 	config, _ := json.Marshal(struct {
 		Version                         string
 		Scopes                          []string
 		Capture, Redacted, DNS, Refresh bool
-	}{"collection-v1:" + permissioncatalog.SHA256(), ordered, capture, redacted, dns, refresh})
+		IncludeSystem                   bool
+	}{"collection-v2:" + permissioncatalog.SHA256(), ordered, capture, redacted, dns, refresh, len(includeSystem) > 0 && includeSystem[0]})
 	sum := sha256.Sum256(config)
 	binding := hex.EncodeToString(sum[:])
 	old, exists, err := e.GetMeta(ctx, "collection_binding")

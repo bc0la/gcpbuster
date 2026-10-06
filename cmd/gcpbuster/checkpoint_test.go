@@ -28,6 +28,23 @@ func checkpointEngagement(t *testing.T) *engagement.Engagement {
 	return e
 }
 
+func TestCollectionCheckpointSystemProjectPolicyBinding(t *testing.T) {
+	ctx := context.Background()
+	e := checkpointEngagement(t)
+	scopes := []string{"organizations/123"}
+	if _, err := newCollectionCheckpoint(ctx, e, scopes, false, false, false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newCollectionCheckpoint(ctx, e, scopes, false, false, false, false, true, true); err == nil {
+		t.Fatal("changed project selection must not reuse checkpoints")
+	}
+	cmd := scanCommand()
+	include, err := cmd.Flags().GetBool("include-system-projects")
+	if err != nil || include {
+		t.Fatal("system projects must be excluded by default", include, err)
+	}
+}
+
 func TestCollectionCheckpointPrivateRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	e := checkpointEngagement(t)

@@ -108,6 +108,8 @@ The parallel scheduler follows BezosBuster's global and per-target limits: `--co
 
 The **Accounts** tab groups scheduled collection work by verified GCP project ID (the GCP counterpart of an AWS account). It shows each project's planned collector-group total, queued/running/completed/failed/cancelled counts, progress percentage and restored checkpoint count. These groups cover the direct collector families, followed by indexed IAM search; totals grow as stages are discovered. Hierarchy/project discovery and optional enrichments remain in Progress/Logs rather than being represented as a fixed per-project denominator. Use Tab/right and Shift+Tab/left to cycle tabs, up/down or Page Up/Page Down to select a project, and Enter to expand its collector-group statuses; scroll the expanded list and press Enter to return. Ctrl+C cancels; `q` does nothing.
 
+Live collection excludes project IDs starting with `sys-` by default. This is a name-prefix heuristic, not confirmation of Apps Script ownership or safety. Excluded projects are recorded as skipped coverage and do not run project collectors. Use `--include-system-projects` to include them. Offline inventories are not filtered. The selection policy is part of the resume configuration; changing it, or resuming pre-policy checkpoints, requires a new engagement directory.
+
 Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HTML directly or serve it locally:
 
 ```bash

@@ -64,6 +64,7 @@ func scanCommand() *cobra.Command {
 	var concurrency int
 	var perProjectConcurrency int
 	var forceUI, noUI bool
+	var includeSystemProjects bool
 	cmd := &cobra.Command{Use: "scan", Short: "Assess Viewer-readable GCP metadata or offline GCP/Workspace inventory", RunE: func(cmd *cobra.Command, _ []string) error {
 		if concurrency < 1 || concurrency > 64 {
 			return errors.New("--concurrency must be between 1 and 64")
@@ -206,6 +207,7 @@ func scanCommand() *cobra.Command {
 		cmd.SetErr(progress.writer)
 		defer progress.Close()
 		client := &inventory.Client{TokenEnv: tokenEnv, Impersonate: impersonate, DNSChecks: dnsChecks, RefreshConfig: refreshConfig, Concurrency: concurrency, PerProjectConcurrency: perProjectConcurrency, Progress: progress.Report}
+		client.IncludeSystemProjects = includeSystemProjects
 		if len(scopes) > 0 {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Collection concurrency: %d global workers, %d per project\n", concurrency, perProjectConcurrency)
 		}
@@ -216,7 +218,7 @@ func scanCommand() *cobra.Command {
 			}
 		}
 		if len(scopes) > 0 {
-			checkpoint, err := newCollectionCheckpoint(cmd.Context(), e, scopes, client.SecretCapture != nil, redactSecrets, dnsChecks, refreshConfig, resume)
+			checkpoint, err := newCollectionCheckpoint(cmd.Context(), e, scopes, client.SecretCapture != nil, redactSecrets, dnsChecks, refreshConfig, resume, includeSystemProjects)
 			if err != nil {
 				return err
 			}
@@ -322,6 +324,7 @@ func scanCommand() *cobra.Command {
 		return assess(cmd.Context(), cmd, e, snap, selected, resume && (len(scopes) == 0 || priorAssessment))
 	}}
 	f := cmd.Flags()
+	f.BoolVar(&includeSystemProjects, "include-system-projects", false, "Include project IDs starting with sys- (excluded by default, with coverage records)")
 	f.BoolVar(&forceUI, "ui", false, "Use interactive Progress/Logs tabs (automatically enabled on a terminal)")
 	f.BoolVar(&noUI, "no-ui", false, "Disable terminal UI; use plain progress output")
 	f.IntVar(&perProjectConcurrency, "per-project-concurrency", 4, "Maximum parallel collection jobs per project, within --concurrency (1-64)")

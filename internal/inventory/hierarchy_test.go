@@ -23,7 +23,7 @@ func TestDiscoveredProjectsActuallyReceiveLogQueries(t *testing.T) {
 			return response(200, `{}`), nil
 		}
 		if strings.HasSuffix(r.URL.Path, "projects") {
-			return response(200, `{"projects":[{"name":"projects/10","parent":"folders/2","state":"ACTIVE"}]}`), nil
+			return response(200, `{"projects":[{"name":"projects/10","projectId":"demo-ten","parent":"folders/2","state":"ACTIVE"}]}`), nil
 		}
 		// A denied sibling discovery must not discard already discovered projects.
 		return response(403, "PRIVATE_ERROR"), nil
@@ -49,11 +49,11 @@ func TestHierarchyNestedPaginationAndScope(t *testing.T) {
 			if r.URL.Query().Get("pageToken") == "" {
 				return response(200, `{"nextPageToken":"next"}`), nil
 			}
-			return response(200, `{"projects":[{"name":"projects/10","parent":"organizations/1","state":"ACTIVE"}]}`), nil
+			return response(200, `{"projects":[{"name":"projects/10","projectId":"demo-ten","parent":"organizations/1","state":"ACTIVE"}]}`), nil
 		case "/v3/folders:organizations/1":
 			return response(200, `{"folders":[{"name":"folders/2","parent":"organizations/1","state":"ACTIVE"}]}`), nil
 		case "/v3/projects:folders/2":
-			return response(200, `{"projects":[{"name":"projects/20","parent":"folders/2","state":"ACTIVE"},{"name":"projects/30","parent":"folders/2","state":"DELETE_REQUESTED"}]}`), nil
+			return response(200, `{"projects":[{"name":"projects/20","projectId":"demo-twenty","parent":"folders/2","state":"ACTIVE"},{"name":"projects/30","parent":"folders/2","state":"DELETE_REQUESTED"}]}`), nil
 		case "/v3/folders:folders/2":
 			return response(200, `{}`), nil
 		default:
@@ -77,7 +77,7 @@ func TestHierarchyFailuresRetainPartialDiscovery(t *testing.T) {
 					return response(200, `{}`), nil
 				}
 				if r.URL.Query().Get("pageToken") == "" {
-					return response(200, `{"projects":[{"name":"projects/10","parent":"folders/2","state":"ACTIVE"}],"nextPageToken":"next"}`), nil
+					return response(200, `{"projects":[{"name":"projects/10","projectId":"demo-ten","parent":"folders/2","state":"ACTIVE"}],"nextPageToken":"next"}`), nil
 				}
 				if bad == "DENIED" {
 					return response(403, "PRIVATE_ERROR"), nil
