@@ -1,0 +1,105 @@
+name: Linux build
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test and vet
+        run: |
+          go test -race ./...
+          go vet ./...
+          GOBIN="$RUNNER_TEMP/go-install-bin" go install ./cmd/gcpbuster
+      - name: Build Linux executable
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist/bundle/.tools/kingfisher-v1.112.0
+          go build -trimpath -o dist/bundle/gcpbuster ./cmd/gcpbuster
+      - name: Fetch and verify pinned Kingfisher
+        run: |
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            https://github.com/mongodb/kingfisher/releases/download/v1.112.0/kingfisher-linux-x64.tgz \
+            --output "$RUNNER_TEMP/kingfisher-linux-x64.tgz"
+          printf '%s  %s\n' \
+            6de98a3ac489b42235f83a4247770378c137413a1aa52a314717f28e9938f709 \
+            "$RUNNER_TEMP/kingfisher-linux-x64.tgz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/kingfisher-linux-x64.tgz" \
+            -C dist/bundle/.tools/kingfisher-v1.112.0 \
+            kingfisher notices
+          printf '%s  %s\n' \
+            8dc3d3d2c4ad4b12b3099efd3fb09bf14013a749d733bf1c0b62008622511c16 \
+            dist/bundle/.tools/kingfisher-v1.112.0/kingfisher | sha256sum --check --strict
+          chmod 755 dist/bundle/.tools/kingfisher-v1.112.0/kingfisher
+      - name: Verify installed Kingfisher reporting
+        env:
+          GCPBUSTER_KINGFISHER_SMOKE: '1'
+        run: |
+          export PATH="$PWD/dist/bundle/.tools/kingfisher-v1.112.0:$PATH"
+          go test ./cmd/gcpbuster ./internal/kingfisher \
+            -run 'InstalledKingfisherCLIReporting|OfficialKingfisherSmoke|Pinned' -count=1
+      - name: Package explicit public deliverables
+        run: |
+          cp README.md SECRETS_COMPLETION.md dist/bundle/
+          if test -f LICENSE; then cp LICENSE dist/bundle/; fi
+          tar -czf dist/gcpbuster-linux-amd64.tar.gz -C dist/bundle .
+          cp dist/bundle/gcpbuster dist/gcpbuster-linux-amd64
+          cd dist
+          sha256sum gcpbuster-linux-amd64 gcpbuster-linux-amd64.tar.gz > SHA256SUMS
+      - name: Upload Linux downloads
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gcpbuster-linux-amd64
+          path: |
+            dist/gcpbuster-linux-amd64
+            dist/gcpbuster-linux-amd64.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: gcpbuster-linux-amd64
+          path: dist
+      - name: Publish tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum --check --strict SHA256SUMS
+          gh release create "$RELEASE_TAG" \
+            gcpbuster-linux-amd64 gcpbuster-linux-amd64.tar.gz SHA256SUMS \
+            --verify-tag --title "$RELEASE_TAG" \
+            --notes 'Linux amd64 build. The tar.gz includes digest-pinned Kingfisher for offline credential-pattern detection; no credential validation. Keep its .tools directory beside gcpbuster. The standalone executable requires Kingfisher on PATH for Kingfisher checks.'

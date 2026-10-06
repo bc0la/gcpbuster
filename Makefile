@@ -1,0 +1,6 @@
+.PHONY: build test
+build:
+	go build -o gcpbuster ./cmd/gcpbuster
+test:
+	go test ./...
+	go vet ./...

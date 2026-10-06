@@ -1,0 +1,15 @@
+{
+  "assets": [
+	{"name":"//iam.googleapis.com/roles/storage.objectViewer","assetType":"iam.googleapis.com/Role","resource":{"data":{"name":"roles/storage.objectViewer","includedPermissions":["storage.objects.get","storage.objects.list"]}}},
+    {"name":"//storage.googleapis.com/example-public-bucket","assetType":"storage.googleapis.com/Bucket","resource":{"data":{"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true},"publicAccessPrevention":"inherited"}}},"iamPolicy":{"bindings":[{"role":"roles/storage.objectViewer","members":["allUsers"]}]}},
+    {"name":"//compute.googleapis.com/projects/demo/global/firewalls/open-ssh","assetType":"compute.googleapis.com/Firewall","resource":{"data":{"direction":"INGRESS","sourceRanges":["0.0.0.0/0"],"allowed":[{"IPProtocol":"tcp","ports":["22"]}]}}},
+    {"name":"//run.googleapis.com/projects/demo/locations/us-central1/services/demo","assetType":"run.googleapis.com/Service","resource":{"location":"us-central1","data":{"template":{"containers":[{"env":[{"name":"DB_PASSWORD","value":"EXAMPLE_NOT_A_REAL_SECRET"},{"name":"SAFE_SECRET","valueSource":{"secretKeyRef":{"secret":"managed-secret","version":"latest"}}}]}]}}}},
+    {"name":"//iam.googleapis.com/projects/demo/locations/global/workloadIdentityPools/ci/providers/shared","assetType":"iam.googleapis.com/WorkloadIdentityPoolProvider","resource":{"data":{"oidc":{"issuerUri":"https://token.actions.githubusercontent.com"},"attributeCondition":""}}},
+    {"name":"//iam.googleapis.com/projects/demo/serviceAccounts/example@demo.iam.gserviceaccount.com/keys/example","assetType":"iam.googleapis.com/ServiceAccountKey","resource":{"data":{"keyType":"USER_MANAGED","validAfterTime":"2020-01-01T00:00:00Z","validBeforeTime":"2099-01-01T00:00:00Z"}}},
+    {"name":"workspace/users/example","assetType":"workspace.googleapis.com/User","resource":{"data":{"id":"example","isAdmin":true,"isEnrolledIn2Sv":false,"isEnforcedIn2Sv":false}}},
+    {"name":"workspace/groups/example@example.invalid","assetType":"workspace.googleapis.com/GroupSettings","resource":{"data":{"whoCanViewGroup":"ANYONE_CAN_VIEW","allowExternalMembers":"true"}}},
+    {"name":"workspace/dwd/example-client-id","assetType":"workspace.googleapis.com/DomainWideDelegation","resource":{"data":{"clientId":"example-client-id","scopes":["https://mail.google.com/"]}}},
+    {"name":"workspace/users/example/gmail","assetType":"workspace.googleapis.com/GmailSettings","resource":{"data":{"autoForwarding":{"enabled":true},"delegates":[{"delegateEmail":"delegate@example.invalid","verificationStatus":"accepted"}],"filters":[{"action":{"forward":"archive@example.invalid"}}]}}},
+    {"name":"workspace/drive/example-file-id","assetType":"workspace.googleapis.com/DriveFile","resource":{"data":{"permissions":[{"type":"anyone","role":"reader","allowFileDiscovery":false}]}}}
+  ]
+}
