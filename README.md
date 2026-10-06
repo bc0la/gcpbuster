@@ -56,7 +56,7 @@ The executable installs into `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is 
 Download the Linux amd64 bundle (GCPBuster plus pinned Kingfisher):
 
 ```bash
-gh release download v0.1.0 --repo bc0la/gcpbuster --pattern 'gcpbuster-linux-amd64.tar.gz' --pattern 'SHA256SUMS'
+gh release download --repo bc0la/gcpbuster --pattern 'gcpbuster-linux-amd64.tar.gz' --pattern 'SHA256SUMS'
 sha256sum --ignore-missing --check SHA256SUMS
 tar -xzf gcpbuster-linux-amd64.tar.gz
 ./gcpbuster --help

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/bc0la/gcpbuster/internal/testfixture"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,9 +126,15 @@ func TestOfficialKingfisherSmoke(t *testing.T) {
 	if os.Getenv("GCPBUSTER_KINGFISHER_SMOKE") != "1" {
 		t.Skip("requires verified workspace release")
 	}
-	binary, err := filepath.Abs("../../.tools/kingfisher-v1.112.0/kingfisher")
+	binary, err := exec.LookPath("kingfisher")
 	if err != nil {
-		t.Fatal(err)
+		binary, err = filepath.Abs("../../.tools/kingfisher-v1.112.0/kingfisher")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !verifiedBinary(binary, pinnedBinarySHA256) {
+		t.Fatal("smoke test requires the digest-verified pinned Kingfisher release")
 	}
 	// Generated synthetic format fixture, never issued or validated.
 	fake := testfixture.GitHubToken()
