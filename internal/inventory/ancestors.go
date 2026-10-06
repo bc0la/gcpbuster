@@ -41,7 +41,7 @@ func (c *Client) readIAMPolicy(ctx context.Context, endpoint string) (Object, er
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := h.Do(req)
+		resp, err := c.doRequest(h, req, attempt+1)
 		if err != nil {
 			return nil, fmt.Errorf("IAM policy read transport failure or cancellation")
 		}

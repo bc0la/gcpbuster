@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ExpandResourceScopes traverses only children of explicitly selected containers.
@@ -34,7 +35,14 @@ func (c *Client) ExpandResourceScopes(ctx context.Context, snap *Snapshot, scope
 			break
 		}
 		for _, kind := range []string{"projects", "folders"} {
+			start := time.Now()
+			c.ReportProgress(ProgressEvent{Phase: "hierarchy", Scope: parent, Collector: kind, Status: "started"})
 			children, err := c.hierarchyChildren(ctx, parent, kind)
+			status := "completed"
+			if err != nil {
+				status = "failed"
+			}
+			c.ReportProgress(ProgressEvent{Phase: "hierarchy", Scope: parent, Collector: kind, Status: status, Count: len(children), Duration: time.Since(start)})
 			snap.record("resource-hierarchy:"+parent+":"+kind, len(children), err)
 			queue = append(queue, children...)
 		}
@@ -78,6 +86,7 @@ func (c *Client) hierarchyChildren(ctx context.Context, parent, kind string) ([]
 				return out, fmt.Errorf("invalid hierarchy pagination token")
 			}
 		}
+		c.ReportProgress(ProgressEvent{Phase: "hierarchy-page", Scope: parent, Collector: kind, Status: "completed", Count: len(out)})
 		next := Str(page["nextPageToken"])
 		if next == "" {
 			return out, nil

@@ -183,6 +183,9 @@ func (c *Client) viewerApigeeBundle(ctx context.Context, name string) ([]byte, e
 	if c.HTTP != nil {
 		copy := *c.HTTP
 		h = &copy
+		if h.Timeout <= 0 {
+			h.Timeout = 60 * time.Second
+		}
 	}
 	h.Jar = nil
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -191,7 +194,7 @@ func (c *Client) viewerApigeeBundle(ctx context.Context, name string) ([]byte, e
 		return nil, fmt.Errorf("could not construct Apigee bundle request")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, e := h.Do(req)
+	resp, e := c.doRequest(h, req, 1)
 	if e != nil {
 		return nil, fmt.Errorf("Apigee bundle transport failed")
 	}

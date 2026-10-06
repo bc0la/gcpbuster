@@ -60,7 +60,12 @@ func scanCommand() *cobra.Command {
 	var iapPolicies, iapSettings bool
 	var logOptions inventory.LogOptions
 	var logLookback time.Duration
+	var verbose bool
+	var concurrency int
 	cmd := &cobra.Command{Use: "scan", Short: "Assess Viewer-readable GCP metadata or offline GCP/Workspace inventory", RunE: func(cmd *cobra.Command, _ []string) error {
+		if concurrency < 1 || concurrency > 64 {
+			return errors.New("--concurrency must be between 1 and 64")
+		}
 		if impersonate != "" {
 			return errors.New("service-account impersonation is disabled: it requires authority beyond the allowed Viewer roles")
 		}
@@ -187,7 +192,13 @@ func scanCommand() *cobra.Command {
 			snap.Coverage = append(snap.Coverage, part.Coverage...)
 			snap.Coverage = append(snap.Coverage, inventory.Coverage{Source: path, Status: "provided", Count: len(part.Assets), Error: "Offline records only; freshness, omitted resources, ancestor policies and export completeness are not verified."})
 		}
-		client := &inventory.Client{TokenEnv: tokenEnv, Impersonate: impersonate, DNSChecks: dnsChecks, RefreshConfig: refreshConfig}
+		progress := newScanProgress(cmd.ErrOrStderr(), verbose)
+		cmd.SetErr(progress.writer)
+		defer progress.Close()
+		client := &inventory.Client{TokenEnv: tokenEnv, Impersonate: impersonate, DNSChecks: dnsChecks, RefreshConfig: refreshConfig, Concurrency: concurrency, Progress: progress.Report}
+		if len(scopes) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Collection concurrency: %d workers (use --verbose for request progress)\n", concurrency)
+		}
 		if kingfisherSelected || plaintextSelected || parameterReferencesSelected {
 			client.SecretCapture = inventory.NewSecretCapture(10000, 4<<20, 64<<20)
 			if !redactSecrets {
@@ -294,6 +305,8 @@ func scanCommand() *cobra.Command {
 		return assess(cmd.Context(), cmd, e, snap, selected, resume)
 	}}
 	f := cmd.Flags()
+	f.BoolVar(&verbose, "verbose", false, "Show request-level progress and timings; tokens, bodies and secret values are never logged")
+	f.IntVar(&concurrency, "concurrency", 8, "Maximum parallel collection jobs across projects and service families (1-64; 1 for serial)")
 	f.BoolVar(&noSecrets, "no-secrets", false, "Skip Kingfisher; native plaintext configuration reporting remains independently selectable")
 	f.BoolVar(&redactSecrets, "redact-secrets", false, "Suppress actual secret values and raw-hit artifacts in all new secret findings; use a fresh engagement")
 	f.StringSliceVar(&projects, "project", nil, "Project IDs/numbers (repeat or comma-separate)")

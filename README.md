@@ -80,6 +80,10 @@ go build -o gcpbuster ./cmd/gcpbuster
 # Explicit hierarchy traversal; reads still require Viewer on each project.
 ./gcpbuster scan --scope organizations/123456789 --engagement ./engagements/org
 
+# Request-level progress and bounded parallel collection (default: 8 workers).
+./gcpbuster scan --scope organizations/123456789 --verbose --concurrency 8 \
+  --engagement ./engagements/org-verbose
+
 # Multiple projects, selected categories.
 ./gcpbuster scan --project PROJECT_A,PROJECT_B --category iam,exposure \
   --engagement ./engagements/iam
@@ -93,6 +97,8 @@ go build -o gcpbuster ./cmd/gcpbuster
 ./gcpbuster scan --project YOUR_PROJECT --scan-logs \
   --engagement ./engagements/log-review
 ```
+
+Live collection prints hierarchy discovery, project and service-family starts/completions, resource counts, incomplete/failure counts and elapsed times to stderr. A 15-second heartbeat makes long waits visible. `--verbose` adds HTTP method/service/status/attempt timings without logging tokens, request paths/queries, response bodies or secret values. One collection-job worker budget spans projects and independent service families, not a separate multiplied pool per project. Dependent reads stay ordered; partial failures remain in coverage and output merging is deterministic. Use `--concurrency 1` for serial collection, or adjust from 1 to 64 for quota and resource constraints. Optional post-discovery enrichments remain separately ordered.
 
 Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HTML directly or serve it locally:
 

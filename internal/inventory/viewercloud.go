@@ -18,115 +18,126 @@ var viewerAssetType = regexp.MustCompile(`^[a-z][a-z0-9.]*\.googleapis\.com/[A-Z
 func (c *Client) ViewerCloud(ctx context.Context, scope string) Snapshot {
 	var out Snapshot
 	scopes := c.ExpandResourceScopes(ctx, &out, []string{scope})
-	for _, container := range scopes {
-		if ctx.Err() != nil {
-			out.record("viewer-inventory:"+container, 0, ctx.Err())
-			break
-		}
-		d, err := c.get(ctx, "https://cloudresourcemanager.googleapis.com/v3/"+container, nil)
-		name := Str(d["name"])
-		project := strings.HasPrefix(container, "projects/")
-		if err == nil && (!logScopePattern.MatchString(name) || (name != container && !(project && projectNumberPattern.MatchString(name) && Str(d["projectId"]) == strings.TrimPrefix(container, "projects/")))) {
-			err = fmt.Errorf("mismatched container metadata")
-		}
-		parent := Str(d["parent"])
-		if err == nil && parent != "" && (!logScopePattern.MatchString(parent) || strings.HasPrefix(parent, "projects/") || parent == name) {
-			err = fmt.Errorf("invalid container parent")
-		}
-		if err == nil && ((strings.HasPrefix(container, "organizations/") && parent != "") || (strings.HasPrefix(container, "folders/") && parent == "")) {
-			err = fmt.Errorf("invalid container hierarchy")
-		}
-		out.record("viewer-metadata:"+container, 1, err)
-		if err != nil {
-			continue
-		}
-		kind := "Project"
-		if strings.HasPrefix(container, "folders/") {
-			kind = "Folder"
-		}
-		if strings.HasPrefix(container, "organizations/") {
-			kind = "Organization"
-		}
-		a := NewAsset("//cloudresourcemanager.googleapis.com/"+name, "cloudresourcemanager.googleapis.com/"+kind, d)
-		// Do not advertise a partial parent chain as complete CAI ancestors.
-		if project {
-			policy, policyErr := c.getContainerPolicy(ctx, name)
-			out.record("viewer-project-iam:"+name, 1, policyErr)
-			if policyErr == nil {
-				a.IAM = policy
+	metadata := make([]Snapshot, len(scopes))
+	projects := make([]viewerProject, len(scopes))
+	jobs := make([]viewerTask, 0, len(scopes))
+	for i, container := range scopes {
+		i, container := i, container
+		jobs = append(jobs, viewerTask{scope: container, family: "metadata", out: &metadata[i], run: func() {
+			projects[i] = c.viewerContainer(ctx, &metadata[i], container)
+		}})
+	}
+	c.runViewerTasks(ctx, jobs)
+	for i := range metadata {
+		out.Assets = append(out.Assets, metadata[i].Assets...)
+		out.Coverage = append(out.Coverage, metadata[i].Coverage...)
+	}
+	groups := c.viewerFamilies()
+	results := make([][]Snapshot, len(projects))
+	for i := range projects {
+		results[i] = make([]Snapshot, len(groups))
+	}
+	jobs = nil
+	// Round-robin projects rather than exhausting one project's families first.
+	// A single pool bounds all projects and independent service families together.
+	for j, family := range groups {
+		for i, project := range projects {
+			if project.id == "" {
+				continue
 			}
+			i, j, project, family := i, j, project, family
+			jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", family: family.name, out: &results[i][j], run: func() {
+				for _, collect := range family.collect {
+					if ctx.Err() != nil {
+						break
+					}
+					collect(ctx, &results[i][j], project.id, project.number)
+				}
+			}})
 		}
-		out.Assets = append(out.Assets, a)
-		if !project {
+	}
+	c.runViewerTasks(ctx, jobs)
+	// Merge in source order, not completion order. IAM search needs the combined
+	// direct policies and therefore runs only after every family has finished.
+	combined := make([]Snapshot, len(projects))
+	for i := range projects {
+		combined[i].Assets = append(combined[i].Assets, metadata[i].Assets...)
+		for j := range groups {
+			combined[i].Assets = append(combined[i].Assets, results[i][j].Assets...)
+			out.Coverage = append(out.Coverage, results[i][j].Coverage...)
+		}
+	}
+	jobs = nil
+	for i, project := range projects {
+		if project.id == "" {
 			continue
 		}
-		projectID := Str(d["projectId"])
-		if !viewerResourceName.MatchString(projectID) || !projectNumberPattern.MatchString(name) {
-			out.record("viewer-project-identity:"+name, 0, fmt.Errorf("project ID or numeric project name missing or invalid"))
-			continue
-		}
-		c.viewerCompute(ctx, &out, projectID, name)
-		c.CollectViewerBackendServices(ctx, &out, projectID, name)
-		c.CollectViewerRoutes(ctx, &out, projectID, name)
-		c.CollectViewerModelArmor(ctx, &out, projectID, name)
-		c.viewerBuckets(ctx, &out, projectID, name)
-		c.CollectViewerSQLGKE(ctx, &out, projectID, name)
-		c.CollectViewerRedis(ctx, &out, projectID, name)
-		c.CollectViewerMemcache(ctx, &out, projectID, name)
-		c.CollectViewerAlloyDB(ctx, &out, projectID, name)
-		c.CollectViewerAlloyDBUsers(ctx, &out, projectID, name)
-		c.CollectViewerFilestore(ctx, &out, projectID, name)
-		c.CollectViewerBigtable(ctx, &out, projectID, name)
-		c.CollectViewerBigtableAuthorizedViews(ctx, &out, projectID, name)
-		c.CollectViewerSpanner(ctx, &out, projectID, name)
-		c.CollectViewerSpannerDDL(ctx, &out, projectID, name)
-		c.CollectViewerFirestore(ctx, &out, projectID, name)
-		c.CollectViewerHealthcare(ctx, &out, projectID, name)
-		c.CollectViewerApigee(ctx, &out, projectID, name)
-		c.CollectViewerServerless(ctx, &out, projectID, name)
-		c.CollectViewerDNSIAM(ctx, &out, projectID, name)
-		c.CollectViewerDNSRecords(ctx, &out, projectID, name)
-		c.CollectViewerDNSPolicies(ctx, &out, projectID, name)
-		c.CollectViewerDNSResponseRules(ctx, &out, projectID, name)
-		c.CollectViewerAPIKeys(ctx, &out, projectID, name)
-		c.CollectViewerKeyMetadata(ctx, &out, projectID, name)
-		c.CollectViewerParameterManager(ctx, &out, projectID, name)
-		c.CollectViewerDeploymentManager(ctx, &out, projectID, name)
-		c.CollectViewerRegionalSecrets(ctx, &out, projectID, name)
-		c.CollectViewerSecretAliases(ctx, &out, projectID, name)
-		c.CollectViewerSecretIAM(ctx, &out, projectID, name)
-		c.CollectViewerBuildWorkflows(ctx, &out, projectID, name)
-		c.CollectViewerWorkflowExecutions(ctx, &out, projectID, name)
-		c.CollectViewerHistoricalSecrets(ctx, &out, projectID, name)
-		c.CollectViewerBuildRepositoryReferences(ctx, &out, projectID, name)
-		c.CollectViewerAutomation(ctx, &out, projectID, name)
-		c.CollectViewerPubSub(ctx, &out, projectID, name)
-		c.CollectViewerPubSubSchemas(ctx, &out, projectID, name)
-		c.CollectViewerPubSubSnapshots(ctx, &out, projectID, name)
-		c.CollectViewerDataConfig(ctx, &out, projectID, name)
-		c.CollectViewerTasksVertex(ctx, &out, projectID, name)
-		c.CollectViewerComputeExtras(ctx, &out, projectID, name)
-		c.CollectViewerComputeDisks(ctx, &out, projectID, name)
-		c.CollectViewerNetworks(ctx, &out, projectID, name)
-		c.CollectViewerEffectiveFirewalls(ctx, &out, projectID, name)
-		c.CollectViewerRegionalEffectiveFirewalls(ctx, &out, projectID, name)
-		c.CollectViewerAPIGateway(ctx, &out, projectID, name)
-		c.CollectViewerServiceManagement(ctx, &out, projectID, name)
-		c.CollectViewerServiceUsage(ctx, &out, projectID, name)
-		c.CollectViewerAppEngine(ctx, &out, projectID, name)
-		c.CollectViewerAppEngineFirewall(ctx, &out, projectID, name)
-		c.CollectViewerFederation(ctx, &out, projectID, name)
-		c.CollectViewerDataflow(ctx, &out, projectID, name)
-		c.CollectViewerDataprocSecrets(ctx, &out, projectID, name)
-		c.CollectViewerNotebookSecrets(ctx, &out, projectID, name)
-		c.CollectViewerCloudDeploy(ctx, &out, projectID, name)
-		c.CollectViewerAppHosting(ctx, &out, projectID, name)
-		c.CollectViewerDataFusionSecrets(ctx, &out, projectID, name)
-		c.CollectViewerComposer(ctx, &out, projectID, name)
-		c.viewerSearchIAM(ctx, &out, name)
+		i, project := i, project
+		jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", family: "iam-search", out: &combined[i], run: func() {
+			c.viewerSearchIAM(ctx, &combined[i], project.number)
+		}})
+	}
+	c.runViewerTasks(ctx, jobs)
+	for i := range projects {
+		out.Assets = append(out.Assets, combined[i].Assets[len(metadata[i].Assets):]...)
+		out.Coverage = append(out.Coverage, combined[i].Coverage...)
+	}
+	if ctx.Err() != nil {
+		out.record("viewer-inventory:"+scope, 0, ctx.Err())
 	}
 	out.Coverage = append(out.Coverage, Coverage{Source: "viewer-inventory:unmapped-services", Status: "incomplete", Error: "Direct viewer inventory covers selected service configuration and metadata, not every GCP service or historical version. Viewer-permitted IAM search adds indexed direct policies, not unindexed policies or effective permissions. Workforce identity and Workspace remain outside this discovery path. Composer discovery depends on indexed resource identities. Individual collector failures and permission denials further limit coverage. Missing resources are not evidence of safety; no additional roles are requested."})
 	return out
+}
+
+// viewerContainer owns its snapshot; metadata reads may overlap across projects.
+func (c *Client) viewerContainer(ctx context.Context, out *Snapshot, container string) viewerProject {
+	if ctx.Err() != nil {
+		out.record("viewer-inventory:"+container, 0, ctx.Err())
+		return viewerProject{}
+	}
+	d, err := c.get(ctx, "https://cloudresourcemanager.googleapis.com/v3/"+container, nil)
+	name := Str(d["name"])
+	project := strings.HasPrefix(container, "projects/")
+	if err == nil && (!logScopePattern.MatchString(name) || (name != container && !(project && projectNumberPattern.MatchString(name) && Str(d["projectId"]) == strings.TrimPrefix(container, "projects/")))) {
+		err = fmt.Errorf("mismatched container metadata")
+	}
+	parent := Str(d["parent"])
+	if err == nil && parent != "" && (!logScopePattern.MatchString(parent) || strings.HasPrefix(parent, "projects/") || parent == name) {
+		err = fmt.Errorf("invalid container parent")
+	}
+	if err == nil && ((strings.HasPrefix(container, "organizations/") && parent != "") || (strings.HasPrefix(container, "folders/") && parent == "")) {
+		err = fmt.Errorf("invalid container hierarchy")
+	}
+	out.record("viewer-metadata:"+container, 1, err)
+	if err != nil {
+		return viewerProject{}
+	}
+	kind := "Project"
+	if strings.HasPrefix(container, "folders/") {
+		kind = "Folder"
+	}
+	if strings.HasPrefix(container, "organizations/") {
+		kind = "Organization"
+	}
+	a := NewAsset("//cloudresourcemanager.googleapis.com/"+name, "cloudresourcemanager.googleapis.com/"+kind, d)
+	// Do not advertise a partial parent chain as complete CAI ancestors.
+	if project {
+		policy, policyErr := c.getContainerPolicy(ctx, name)
+		out.record("viewer-project-iam:"+name, 1, policyErr)
+		if policyErr == nil {
+			a.IAM = policy
+		}
+	}
+	out.Assets = append(out.Assets, a)
+	if !project {
+		return viewerProject{}
+	}
+	projectID := Str(d["projectId"])
+	if !viewerResourceName.MatchString(projectID) || !projectNumberPattern.MatchString(name) {
+		out.record("viewer-project-identity:"+name, 0, fmt.Errorf("project ID or numeric project name missing or invalid"))
+		return viewerProject{}
+	}
+	return viewerProject{id: projectID, number: name}
 }
 
 // viewerSearchIAM intentionally sends no query: role/permission filters would

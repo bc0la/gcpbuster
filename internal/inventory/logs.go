@@ -136,7 +136,7 @@ func (c *Client) logPage(ctx context.Context, body Object) (Object, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := h.Do(req)
+		resp, err := c.doRequest(h, req, attempt+1)
 		if err != nil {
 			return nil, fmt.Errorf("log query transport failure or cancellation")
 		}

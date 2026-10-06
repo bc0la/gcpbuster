@@ -25,6 +25,9 @@ type Client struct {
 	RefreshConfig    bool
 	WorkspaceMembers bool
 	SecretCapture    *SecretCapture // Optional transient configuration samples; never serialized in Snapshot.
+	Concurrency      int            // Bound concurrent collection jobs; zero preserves serial library behavior.
+	Progress         func(ProgressEvent)
+	progressMu       sync.Mutex
 	mu               sync.Mutex
 	token            string
 	refresh          time.Time
@@ -123,6 +126,9 @@ func (c *Client) get(ctx context.Context, endpoint string, q url.Values) (Object
 	if c.HTTP != nil {
 		copy := *c.HTTP
 		h = &copy
+		if h.Timeout <= 0 {
+			h.Timeout = 60 * time.Second
+		}
 	}
 	h.Jar = nil
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -132,7 +138,7 @@ func (c *Client) get(ctx context.Context, endpoint string, q url.Values) (Object
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := h.Do(req)
+		resp, err := c.doRequest(h, req, attempt+1)
 		if err != nil {
 			return nil, err
 		}

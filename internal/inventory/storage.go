@@ -79,7 +79,7 @@ func (c *Client) storageGET(ctx context.Context, endpoint string, authenticated 
 		if byteRange != "" {
 			req.Header.Set("Range", byteRange)
 		}
-		resp, err := h.Do(req)
+		resp, err := c.doRequest(h, req, attempt+1)
 		if err != nil {
 			return storageResponse{}, fmt.Errorf("storage request failed (transport or cancellation)")
 		}

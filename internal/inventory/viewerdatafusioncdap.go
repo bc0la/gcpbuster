@@ -96,6 +96,9 @@ func (c *Client) cdapRead(ctx context.Context, binding cdapBinding, path string,
 	if c.HTTP != nil {
 		copy := *c.HTTP
 		h = &copy
+		if h.Timeout <= 0 {
+			h.Timeout = 60 * time.Second
+		}
 	}
 	h.Jar = nil
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -104,7 +107,7 @@ func (c *Client) cdapRead(ctx context.Context, binding cdapBinding, path string,
 		return nil, fmt.Errorf("invalid CDAP metadata request")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := h.Do(req)
+	resp, err := c.doRequest(h, req, 1)
 	if err != nil {
 		return nil, fmt.Errorf("CDAP metadata transport failed")
 	}
