@@ -155,7 +155,7 @@ func (c *Client) logPage(ctx context.Context, body Object) (Object, error) {
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("log query unavailable: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("log query unavailable: %s", safeHTTPFailure(resp))
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, (16<<20)+1))
 		resp.Body.Close()

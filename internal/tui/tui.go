@@ -53,7 +53,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = max(20, v.Width), max(8, v.Height)
 	case tea.KeyMsg:
 		switch v.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			if m.cancel != nil {
 				m.cancel()
 			}
@@ -224,7 +224,7 @@ func (m *Model) View() string {
 	if len(lines) > m.height-2 {
 		lines = lines[:m.height-2]
 	}
-	lines = append(lines, "", "tab: Progress/Logs • ↑/↓ pgup/pgdown: scroll logs • end: follow • q/ctrl+c: cancel")
+	lines = append(lines, "", "tab: Progress/Logs • ↑/↓ pgup/pgdown: scroll logs • end: follow • ctrl+c: cancel")
 	for i, line := range lines {
 		r := []rune(line)
 		if len(r) > m.width {

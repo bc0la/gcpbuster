@@ -71,7 +71,25 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 				stateMu.Unlock()
 				started := time.Now()
 				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: "started"})
-				task.run()
+				restored := false
+				cacheable := c.CollectionCheckpoint != nil && task.out != nil && checkpointFamily(task.family)
+				if cacheable {
+					saved, found, err := c.CollectionCheckpoint.Load(ctx, task.scope, task.family)
+					if err != nil {
+						c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Collector: task.family, Status: "failed", Reason: "checkpoint read failed; collecting again"})
+					} else if found && checkpointComplete(saved) {
+						*task.out = saved
+						restored = true
+					}
+				}
+				if !restored {
+					task.run()
+					if cacheable && ctx.Err() == nil && checkpointComplete(*task.out) {
+						if err := c.CollectionCheckpoint.Save(ctx, task.scope, task.family, *task.out); err != nil {
+							task.out.Coverage = append(task.out.Coverage, Coverage{Source: "collection-checkpoint:" + task.scope + ":" + task.family, Status: "incomplete", Error: "Private collection checkpoint could not be saved; this task must be collected again on resume."})
+						}
+					}
+				}
 				status := "completed"
 				count, failures := 0, 0
 				if task.out != nil {
@@ -84,6 +102,8 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 				}
 				if ctx.Err() != nil {
 					status = "cancelled"
+				} else if restored {
+					c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Collector: task.family, Status: "restored", Count: count})
 				}
 				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: status, Count: count, Failures: failures, Duration: time.Since(started)})
 				stateMu.Lock()

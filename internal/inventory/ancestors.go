@@ -60,7 +60,7 @@ func (c *Client) readIAMPolicy(ctx context.Context, endpoint string) (Object, er
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("IAM policy read unavailable: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("IAM policy read unavailable: %s", safeHTTPFailure(resp))
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, (16<<20)+1))
 		resp.Body.Close()

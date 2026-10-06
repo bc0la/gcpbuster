@@ -187,6 +187,11 @@ func scanCommand() *cobra.Command {
 		if dir == "" {
 			dir = filepath.Join("engagements", time.Now().UTC().Format("20060102T150405.000000000Z"))
 		}
+		e, err := engagement.Open(dir)
+		if err != nil {
+			return err
+		}
+		defer e.Close()
 		var snap inventory.Snapshot
 		for _, path := range files {
 			part, err := inventory.Load(path)
@@ -209,6 +214,14 @@ func scanCommand() *cobra.Command {
 			if !redactSecrets {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Secret values will be retained in private reports for manual validation; credential validation is disabled.")
 			}
+		}
+		if len(scopes) > 0 {
+			checkpoint, err := newCollectionCheckpoint(cmd.Context(), e, scopes, client.SecretCapture != nil, redactSecrets, dnsChecks, refreshConfig, resume)
+			if err != nil {
+				return err
+			}
+			client.CollectionCheckpoint = checkpoint
+			fmt.Fprintf(cmd.ErrOrStderr(), "Collection checkpoints: %s (resume=%t; secret-bearing collectors are always reread)\n", dir, resume)
 		}
 		seen := map[string]bool{}
 		for _, scope := range scopes {
@@ -302,12 +315,11 @@ func scanCommand() *cobra.Command {
 		} else if redactSecrets {
 			snap.SecretValueMode = "redacted"
 		}
-		e, err := engagement.Open(dir)
+		_, priorAssessment, err := e.GetMeta(cmd.Context(), "inventory_fingerprint")
 		if err != nil {
 			return err
 		}
-		defer e.Close()
-		return assess(cmd.Context(), cmd, e, snap, selected, resume)
+		return assess(cmd.Context(), cmd, e, snap, selected, resume && (len(scopes) == 0 || priorAssessment))
 	}}
 	f := cmd.Flags()
 	f.BoolVar(&forceUI, "ui", false, "Use interactive Progress/Logs tabs (automatically enabled on a terminal)")
@@ -351,7 +363,7 @@ func scanCommand() *cobra.Command {
 	f.Int64Var(&storage.MaxArchiveBytes, "storage-max-archive-bytes", 10<<20, "Maximum total decompressed ZIP bytes per object (up to 256 MiB)")
 	f.IntVar(&storage.MaxArchiveEntries, "storage-max-archive-entries", 1000, "Maximum ZIP entries inspected per object")
 	f.StringVar(&storage.Prefix, "storage-prefix", "", "Restrict storage object collection to this prefix")
-	f.BoolVar(&resume, "resume", false, "Skip completed checks only when the inventory fingerprint matches")
+	f.BoolVar(&resume, "resume", false, "Reuse successful metadata collection checkpoints in --engagement; skip completed checks only for an identical assessment")
 	run := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runWithTerminalUI(cmd, args, run, forceUI, noUI)

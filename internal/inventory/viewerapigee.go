@@ -200,7 +200,7 @@ func (c *Client) viewerApigeeBundle(ctx context.Context, name string) ([]byte, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Apigee bundle GET HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("Apigee bundle GET %s", safeHTTPFailure(resp))
 	}
 	data, e := io.ReadAll(io.LimitReader(resp.Body, viewerApigeeBundleLimit+1))
 	if e != nil {

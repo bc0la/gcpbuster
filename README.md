@@ -102,7 +102,7 @@ go build -o gcpbuster ./cmd/gcpbuster
   --engagement ./engagements/log-review
 ```
 
-On an interactive terminal, live scans automatically use a Bubble Tea interface with separate **Progress** and **Logs** tabs. Progress shows stage totals, queued/running/completed work, resource counts and failure counts; Logs keeps request-level activity separate from the overview. Press Tab or left/right arrows to switch tabs, up/down or Page Up/Page Down to scroll logs, End to follow new entries, and `q` or Ctrl+C to cancel collection. `--ui` explicitly enables the interface; `--no-ui` disables it. Non-terminal output uses plain stderr progress automatically. In plain mode, `--verbose` adds HTTP method/service/status/attempt timings; a 15-second heartbeat makes long waits visible. Neither interface logs tokens, request paths/queries, response bodies or secret values.
+On an interactive terminal, live scans automatically use a Bubble Tea interface with separate **Progress** and **Logs** tabs. Progress shows stage totals, queued/running/completed work, resource counts and failure counts; Logs keeps request-level activity separate from the overview. Press Tab or left/right arrows to switch tabs, up/down or Page Up/Page Down to scroll logs, End to follow new entries, and Ctrl+C to cancel collection. `q` does not quit or cancel. `--ui` explicitly enables the interface; `--no-ui` disables it. Non-terminal output uses plain stderr progress automatically. In plain mode, `--verbose` adds HTTP method/service/status/attempt timings; a 15-second heartbeat makes long waits visible. Neither interface logs tokens, request paths/queries, response bodies or secret values.
 
 The parallel scheduler follows BezosBuster's global and per-target limits: `--concurrency` defaults to **8** collection workers globally, and `--per-project-concurrency` defaults to **4** jobs per project within that global budget. Both accept 1–64; `--concurrency 1` makes collection serial. Fair dispatch mixes projects and independent service families without reserving workers for a busy project's queue. Dependent reads stay ordered, partial failures remain in coverage, and output merging is deterministic. Optional post-discovery enrichments remain separately ordered. HTTP 429 responses share a service-level cooldown across workers, honor bounded `Retry-After` delays and use bounded retries; cancellation interrupts waits. Lower concurrency if your organization's quotas require it. These settings do not add permissions, enable APIs or turn denied/disabled service reads into successful coverage.
 
@@ -115,7 +115,17 @@ Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HT
 
 The report keeps four sections, filters, module status, evidence/remediation, and collection coverage. Failed/incomplete collection produces a saved partial report **and a nonzero exit status**. Current live discovery deliberately reports incomplete service coverage even when all attempted reads succeed. `skipped` means no applicable records were supplied, not that a control passed. Findings alone do not change the exit status.
 
-Use matching input with `--engagement DIR --resume` to resume; completed modules skip only when the analysis fingerprint matches. Changed live inventory needs a new engagement. Reuse without `--resume` is rejected. Input ordering can affect fingerprints; the current evaluator fingerprint is `v40-viewer`, and older engagements require a new assessment directory.
+Use `--engagement DIR` from the start of a live scan, then repeat the same command with `--resume` after interruption. Successful reviewed metadata collector families are checkpointed in the private engagement SQLite database. Resume reuses eligible successful families, retries failed/unfinished work, and rereads hierarchy, project metadata, IAM searches, optional enrichments and secret-bearing families. Cached metadata reflects the original read time, not a fresh complete scan; use a new engagement for fresh collection. Scopes and collection options must match. Older engagements without collection checkpoints require a new directory.
+
+```bash
+gcpbuster scan --scope organizations/123456789 --engagement ./engagements/org
+# After interruption:
+gcpbuster scan --scope organizations/123456789 --engagement ./engagements/org --resume
+```
+
+Offline assessment resume remains supported with matching input. Completed checks skip only when the analysis fingerprint matches. If a prior assessment exists and reread inventory changes, use a new engagement; resume never silently combines findings from different inventories. Reuse without `--resume` is rejected. Input ordering can affect fingerprints; the current evaluator fingerprint is `v44-viewer`.
+
+Resume using the same identity as the original collection. Checkpoints are historical local records, not proof that the current identity still has access to those resources; authentication tokens are never stored in them.
 
 ## Current live discovery and its limits
 

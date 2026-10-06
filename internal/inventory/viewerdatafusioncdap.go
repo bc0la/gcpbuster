@@ -113,7 +113,7 @@ func (c *Client) cdapRead(ctx context.Context, binding cdapBinding, path string,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("CDAP metadata HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("CDAP metadata %s", safeHTTPFailure(resp))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 {

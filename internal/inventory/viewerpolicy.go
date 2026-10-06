@@ -754,7 +754,7 @@ func (c *Client) loadViewerRole(ctx context.Context, role string) ([]string, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("role definition HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("role definition %s", safeHTTPFailure(resp))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 {

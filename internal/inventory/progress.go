@@ -80,10 +80,13 @@ func (c *Client) doRequest(h *http.Client, req *http.Request, attempt int) (*htt
 			event.HTTPStatus = resp.StatusCode
 			if resp.StatusCode >= 400 {
 				event.Status = "failed"
+				event.Reason = inspectAPIErrorResponse(resp)
 			}
 		}
 		if err == nil && resp.StatusCode == http.StatusTooManyRequests {
-			event.Reason = "RATE_LIMITED"
+			if event.Reason == "" {
+				event.Reason = "RATE_LIMITED"
+			}
 			until := time.Now().Add(retryAfterDelay(resp.Header.Get("Retry-After"), time.Now(), n))
 			event.RetryAfter = time.Until(until)
 			c.setServiceCooldown(req.URL.Hostname(), until)

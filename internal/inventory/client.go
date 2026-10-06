@@ -28,6 +28,7 @@ type Client struct {
 	Concurrency           int            // Bound concurrent collection jobs; zero preserves serial library behavior.
 	PerProjectConcurrency int            // Optional per-project cap within the global worker limit.
 	Progress              func(ProgressEvent)
+	CollectionCheckpoint  CollectionCheckpoint // Optional private, configuration-bound metadata resume store.
 	progressMu            sync.Mutex
 	rateLimitMu           sync.Mutex
 	rateLimits            map[string]time.Time
@@ -163,7 +164,7 @@ func (c *Client) get(ctx context.Context, endpoint string, q url.Values) (Object
 		}
 		if resp.StatusCode != 200 {
 			// Do not log response bodies: upstream errors can echo sensitive input.
-			return nil, fmt.Errorf("GET %s: HTTP %d (check permissions, OAuth scopes, API enablement, and token expiry)", endpoint, resp.StatusCode)
+			return nil, fmt.Errorf("GET %s: %s (check permissions, OAuth scopes, API enablement, and token expiry)", endpoint, safeHTTPFailure(resp))
 		}
 		var out Object
 		if err := json.Unmarshal(body, &out); err != nil {

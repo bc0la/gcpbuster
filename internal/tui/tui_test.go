@@ -62,6 +62,10 @@ func TestBoundedLogsResizeAndScroll(t *testing.T) {
 func TestCancellationAndDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := New(cancel)
+	_, ignored := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if ctx.Err() != nil || ignored != nil || m.done {
+		t.Fatal("q must not cancel or quit the scan")
+	}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if ctx.Err() == nil || cmd == nil {
 		t.Fatal("cancellation missing")
