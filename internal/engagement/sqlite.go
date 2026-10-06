@@ -162,6 +162,16 @@ func (e *Engagement) writeLogLine(module, projectID, level, msg string) {
 // Open opens an engagement at the given directory. The directory is created
 // if missing, and the SQLite schema is initialized.
 func Open(dir string) (*Engagement, error) {
+	return openEngagement(dir, false)
+}
+
+// OpenReadOnly serves an existing private engagement without initializing the
+// schema, creating files or permitting database writes.
+func OpenReadOnly(dir string) (*Engagement, error) {
+	return openEngagement(dir, true)
+}
+
+func openEngagement(dir string, readOnly bool) (*Engagement, error) {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, errors.New("cannot resolve engagement directory")
@@ -184,8 +194,10 @@ func Open(dir string) (*Engagement, error) {
 			break
 		}
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+	if !readOnly {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
 	}
 	directory, err := os.Lstat(dir)
 	if err != nil || !directory.IsDir() || directory.Mode()&os.ModeSymlink != 0 || directory.Mode().Perm() != 0700 {
@@ -202,13 +214,15 @@ func Open(dir string) (*Engagement, error) {
 	}
 	// Precreate before SQLite opens: its default creation mode is otherwise
 	// readable by other users until a later chmod. Never truncate an existing DB.
-	created, err := root.OpenFile(DBFileName, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-	if err == nil {
-		if err = created.Close(); err != nil {
-			return nil, err
+	if !readOnly {
+		created, createErr := root.OpenFile(DBFileName, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if createErr == nil {
+			if err = created.Close(); err != nil {
+				return nil, err
+			}
+		} else if !os.IsExist(createErr) {
+			return nil, errors.New("cannot create private engagement database")
 		}
-	} else if !os.IsExist(err) {
-		return nil, errors.New("cannot create private engagement database")
 	}
 	var database os.FileInfo
 	for _, name := range []string{DBFileName, DBFileName + "-journal", DBFileName + "-wal", DBFileName + "-shm"} {
@@ -230,15 +244,24 @@ func Open(dir string) (*Engagement, error) {
 	// Escape path characters instead of permitting a directory name containing
 	// '?' or '#' to inject SQLite connection parameters. rw forbids fallback
 	// creation if the private precreated file disappeared.
-	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=rw"}).String()
+	mode := "mode=rw"
+	if readOnly {
+		mode = "mode=ro"
+	}
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: mode}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if !readOnly {
+		if _, err := db.Exec(schema); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("schema: %w", err)
+		}
+	} else if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("schema: %w", err)
+		return nil, errors.New("cannot open existing engagement database")
 	}
 	// The private directory prevents other users from replacing these entries;
 	// still fail closed if the caller's own concurrent operations changed them.

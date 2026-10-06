@@ -664,15 +664,15 @@ func reportCommand() *cobra.Command {
 		if _, err := os.Stat(filepath.Join(dir, engagement.DBFileName)); err != nil {
 			return err
 		}
-		e, err := engagement.Open(dir)
+		e, err := engagement.OpenReadOnly(dir)
 		if err != nil {
 			return err
 		}
 		defer e.Close()
 		fmt.Fprintln(cmd.OutOrStdout(), "Report listening on http://"+addr)
-		return report.Serve(addr, e)
+		return report.ServeContext(cmd.Context(), addr, e)
 	}}
 	cmd.Flags().StringVar(&dir, "engagement", "", "Existing engagement directory")
-	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8080", "HTTP bind address")
+	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8080", "Loopback HTTP bind address")
 	return cmd
 }

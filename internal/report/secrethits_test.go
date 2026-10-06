@@ -39,8 +39,8 @@ func TestSecretHitDownloadRequiresExactDatabaseReference(t *testing.T) {
 	if w.Code != 200 || w.Body.String() != payload || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("X-Content-Type-Options") != "nosniff" || !strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment;") {
 		t.Fatal(w.Code, w.Header())
 	}
-	w = get("/")
-	if strings.Contains(w.Body.String(), "<script>alert") || !strings.Contains(w.Body.String(), `href="`+path+`"`) {
+	w = get("/api/findings/1")
+	if strings.Contains(w.Body.String(), "<script>alert") || !strings.Contains(w.Body.String(), path) {
 		t.Fatal(w.Body.String())
 	}
 	for _, bad := range []string{"/secret-hits/", "/secret-hits/../engagement.db", "/" + path + "?download=1", "/raw/engagement.db"} {

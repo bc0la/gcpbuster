@@ -23,8 +23,13 @@ func TestReportEscapesResourceContentAndRejectsWrites(t *testing.T) {
 	h := Handler(e)
 	r := httptest.NewRecorder()
 	h.ServeHTTP(r, httptest.NewRequest("GET", "/", nil))
-	if r.Code != 200 || strings.Contains(r.Body.String(), "<img src=x") || !strings.Contains(r.Body.String(), "&lt;img") {
+	if r.Code != 200 || strings.Contains(r.Body.String(), "<img src=x") || strings.Contains(r.Body.String(), "alert('x')") {
 		t.Fatal("unsafe HTML", r.Body.String())
+	}
+	r = httptest.NewRecorder()
+	h.ServeHTTP(r, httptest.NewRequest("GET", "/api/findings/1", nil))
+	if r.Code != 200 || strings.Contains(r.Body.String(), "<script>") || strings.Contains(r.Body.String(), "<img src=x") || !strings.Contains(r.Body.String(), `\u003cimg`) {
+		t.Fatal("unsafe JSON detail", r.Body.String())
 	}
 	r = httptest.NewRecorder()
 	h.ServeHTTP(r, httptest.NewRequest("POST", "/", nil))

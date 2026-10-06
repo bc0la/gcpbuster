@@ -1,6 +1,7 @@
 package report
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	_ "embed"
@@ -8,7 +9,9 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +23,9 @@ import (
 
 //go:embed index.html
 var page string
+
+//go:embed server.html
+var serverPage string
 var tmpl = template.Must(template.New("report").Parse(page))
 
 type Row struct {
@@ -144,10 +150,27 @@ func privateExport(dir, name string, write func(io.Writer) error) error {
 	return nil
 }
 func Handler(e *engagement.Engagement) http.Handler {
+	api := APIHandler(e.DB())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			if err != nil || u.Host != r.Host || u.Scheme != scheme || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+				http.Error(w, "Cross-origin access is not permitted", http.StatusForbidden)
+				return
+			}
+		}
+		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" {
+			http.Error(w, "Cross-site access is not permitted", http.StatusForbidden)
+			return
+		}
 		if r.Method != "GET" {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -174,25 +197,60 @@ func Handler(e *engagement.Engagement) http.Handler {
 			_, _ = io.Copy(w, io.LimitReader(f, engagement.SecretArtifactMaxBytes))
 			return
 		}
-		d, rows, err := Read(e.DB())
-		if err != nil {
-			http.Error(w, "Cannot read engagement", 500)
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			api.ServeHTTP(w, r)
 			return
 		}
 		switch r.URL.Path {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_ = tmpl.Execute(w, d)
-		case "/api/findings":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(rows)
+			_, _ = io.WriteString(w, serverPage)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 }
 func Serve(addr string, e *engagement.Engagement) error {
-	s := &http.Server{Addr: addr, Handler: Handler(e), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
-	return s.ListenAndServe()
+	return ServeContext(context.Background(), addr, e)
+}
+
+func ServeContext(ctx context.Context, addr string, e *engagement.Engagement) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.New("report address must be a loopback host:port")
+	}
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("reports contain private data; bind to a loopback address and use an SSH tunnel for remote access")
+	}
+	inner := Handler(e)
+	guard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestHost, requestPort, err := net.SplitHostPort(r.Host)
+		if err != nil && !strings.Contains(r.Host, ":") {
+			requestHost, requestPort, err = r.Host, "80", nil
+		}
+		requestIP := net.ParseIP(requestHost)
+		if err != nil || requestPort != port || (requestHost != "localhost" && (requestIP == nil || !requestIP.IsLoopback())) {
+			http.Error(w, "Invalid report host", http.StatusForbidden)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	s := &http.Server{Addr: addr, Handler: guard, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.Shutdown(shutdownCtx)
+		case <-done:
+		}
+	}()
+	if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 func Render(w io.Writer, d Data) error { return tmpl.Execute(w, d) }

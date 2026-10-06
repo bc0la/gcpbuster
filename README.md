@@ -112,12 +112,16 @@ Live collection excludes project IDs starting with `sys-` by default. This is a 
 
 Collection completion is not scan completion: the Progress tab separately shows local secret analysis, assessment preparation, running checks (scanned inventory records and finding counts), and report export. In-check updates are emitted approximately every two seconds as evaluation proceeds; a single blocking operation may take longer. Findings are committed in transactions of at most 256 rows without disabling SQLite durability. Interrupted/failed checks are not marked completed; resume deletes their partial findings before rerunning them against the same inventory.
 
-Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HTML directly or serve it locally:
+Each run writes `engagement.db`, `report.html`, and `findings.json`. For large engagements, use the database-backed report server instead of opening the static HTML:
 
 ```bash
 ./gcpbuster report --engagement ./engagements/project
 # http://127.0.0.1:8080
 ```
+
+This uses the existing `engagement.db` directly in read-only mode: no rescan, schema migration or regenerated export is required. Point `--engagement` at the directory containing the database. The server has the same four category tabs, module/project/severity filters and literal metadata search. Findings default to 50 per page (maximum 200); evidence and protected source downloads are loaded on demand. Coverage and module runs are separately paginated. Static `report.html`/`findings.json` exports remain available but contain all findings and can be large. The `/api/findings` endpoint now returns a paginated envelope rather than a full array.
+
+Reports can contain actual secret values. The server binds only to loopback (`--addr 127.0.0.1:8080` by default), rejects cross-origin access and never exposes the engagement directory/database as static files. Use an SSH tunnel for remote viewing rather than exposing it on the network. Ctrl+C stops the server.
 
 The report keeps four sections, filters, module status, evidence/remediation, and collection coverage. Failed/incomplete collection produces a saved partial report **and a nonzero exit status**. Current live discovery deliberately reports incomplete service coverage even when all attempted reads succeed. `skipped` means no applicable records were supplied, not that a control passed. Findings alone do not change the exit status.
 
