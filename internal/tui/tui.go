@@ -28,6 +28,8 @@ type task struct {
 	count, failures int
 	duration        time.Duration
 	cached          bool
+	total, findings int
+	phase           string
 }
 type Model struct {
 	cancel                       context.CancelFunc
@@ -42,6 +44,7 @@ type Model struct {
 	recent                       []string
 	requests, requestFailures    int
 	done                         bool
+	phase                        string
 	Err                          error
 }
 
@@ -133,13 +136,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.appendLog(fmt.Sprintf("request %-9s %s %s HTTP=%d attempt=%d elapsed=%s reason=%s retry-after=%s", e.Status, e.Method, e.Host, e.HTTPStatus, e.Attempt, e.Duration.Round(time.Millisecond), e.Reason, e.RetryAfter))
-		} else if e.Phase == "collector" || e.Phase == "hierarchy" || e.Phase == "module" {
+		} else if e.Phase == "collector" || e.Phase == "hierarchy" || e.Phase == "module" || e.Phase == "stage" {
 			key := clean(e.Phase + " / " + e.Scope + " / " + e.Collector)
 			p := m.tasks[key]
 			if e.Status == "started" {
 				p.started = time.Now()
 			}
 			p.status, p.count, p.failures, p.duration = e.Status, e.Count, e.Failures, e.Duration
+			p.total, p.findings, p.phase = e.Total, e.Findings, e.Phase
+			if e.Status == "progress" {
+				p.status = "started"
+				if p.started.IsZero() {
+					p.started = time.Now()
+				}
+			}
+			if e.Phase == "module" {
+				m.phase = "assessing"
+			} else if e.Phase == "stage" {
+				m.phase = clean(e.Collector)
+			}
 			p.cached = e.Cached || e.Status == "cached"
 			m.tasks[key] = p
 			if e.Phase == "collector" && e.Account != "" {
@@ -150,8 +165,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.accounts[account][clean(e.Collector)] = p
 			}
 			line := fmt.Sprintf("%s: %s records=%d failures=%d elapsed=%s", key, e.Status, e.Count, e.Failures, e.Duration.Round(time.Millisecond))
+			if e.Phase == "module" {
+				line = fmt.Sprintf("%s: %s assets=%d/%d findings=%d elapsed=%s", key, e.Status, e.Count, e.Total, e.Findings, e.Duration.Round(time.Millisecond))
+			}
 			m.appendLog(line)
-			if e.Status != "started" && e.Status != "queued" {
+			if e.Status != "started" && e.Status != "queued" && e.Status != "progress" {
 				m.recent = append(m.recent, clean(line))
 				if len(m.recent) > 8 {
 					m.recent = m.recent[len(m.recent)-8:]
@@ -297,6 +315,9 @@ func clean(s string) string {
 
 func (m *Model) View() string {
 	state := "collecting"
+	if m.phase != "" {
+		state = m.phase
+	}
 	if m.done {
 		state = "finished"
 		if m.Err != nil {
@@ -325,7 +346,9 @@ func (m *Model) View() string {
 		active, completed, failed, skipped, records, queued, cancelled := 0, 0, 0, 0, 0, 0, 0
 		var running []string
 		for k, p := range m.tasks {
-			records += p.count
+			if p.phase != "module" && p.phase != "stage" {
+				records += p.count
+			}
 			switch p.status {
 			case "queued":
 				queued++
@@ -333,7 +356,11 @@ func (m *Model) View() string {
 				cancelled++
 			case "started":
 				active++
-				running = append(running, fmt.Sprintf("  ▸ %s (%s)", k, time.Since(p.started).Truncate(time.Second)))
+				line := fmt.Sprintf("  ▸ %s (%s)", k, time.Since(p.started).Truncate(time.Second))
+				if p.phase == "module" {
+					line += fmt.Sprintf(" assets=%d/%d findings=%d", p.count, p.total, p.findings)
+				}
+				running = append(running, line)
 			case "completed", "cached":
 				if p.failures > 0 {
 					failed++
@@ -346,7 +373,7 @@ func (m *Model) View() string {
 				skipped++
 			}
 		}
-		lines = append(lines, fmt.Sprintf("Discovered work: %d • active %d • completed %d • failed/partial %d • skipped %d", len(m.tasks), active, completed, failed, skipped), fmt.Sprintf("Collected records: %d • HTTP requests: %d • HTTP failures: %d", records, m.requests, m.requestFailures), "Totals grow as projects/services are discovered; failures are not evidence of safety.", "", "Active collectors:")
+		lines = append(lines, fmt.Sprintf("Discovered work: %d • active %d • completed %d • failed/partial %d • skipped %d", len(m.tasks), active, completed, failed, skipped), fmt.Sprintf("Collected records: %d • HTTP requests: %d • HTTP failures: %d", records, m.requests, m.requestFailures), "Totals grow as projects/services are discovered; failures are not evidence of safety.", "", "Active collectors / checks / stages:")
 		lines = append(lines, fmt.Sprintf("Collector groups: queued %d • cancelled %d", queued, cancelled))
 		var stages []string
 		for stage := range m.schedulers {

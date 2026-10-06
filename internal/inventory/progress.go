@@ -15,6 +15,7 @@ type ProgressEvent struct {
 	Account                                      string // Verified project ID for per-project progress; blank for hierarchy metadata.
 	Cached                                       bool   // Completed collector output restored from a private checkpoint.
 	Count                                        int
+	Findings                                     int
 	Failures                                     int
 	Duration                                     time.Duration
 	Method, Host                                 string

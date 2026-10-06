@@ -351,8 +351,7 @@ func (e *Engagement) Write(ctx context.Context, f findings.Finding) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, err = e.db.ExecContext(ctx,
-		`INSERT INTO findings(project_id, region, module, severity, resource_name, title, detail_json, raw_output_path, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		insertFindingSQL,
 		f.ProjectID, f.Region, f.Module, string(f.Severity), f.ResourceName, f.Title, detail, nullIfEmpty(f.RawOutputPath), created)
 	return err
 }

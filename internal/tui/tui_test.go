@@ -235,3 +235,46 @@ func TestAccountsNavigationManyProjectsAndFamilies(t *testing.T) {
 		t.Fatal("forward navigation", m.tab)
 	}
 }
+
+func TestModuleAndStageProgress(t *testing.T) {
+	m := New(nil)
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	m.Update(ProgressMsg{Phase: "stage", Collector: "secrets", Status: "started"})
+	if !strings.Contains(m.View(), "GCPBuster • secrets") {
+		t.Fatal(m.View())
+	}
+	m.Update(ProgressMsg{Phase: "stage", Collector: "secrets", Status: "completed"})
+	e := ProgressMsg{Phase: "module", Scope: "assessment", Collector: "check_one", Status: "queued", Total: 1000}
+	m.Update(e)
+	e.Status = "started"
+	m.Update(e)
+	key := "module / assessment / check_one"
+	started := m.tasks[key].started
+	e.Status = "progress"
+	e.Count = 400
+	e.Findings = 3
+	m.Update(e)
+	if m.tasks[key].started != started || m.tasks[key].status != "started" {
+		t.Fatal("progress reset timing/state")
+	}
+	view := m.View()
+	if !strings.Contains(view, "GCPBuster • assessing") || !strings.Contains(view, "assets=400/1000 findings=3") || !strings.Contains(view, "Collected records: 0") {
+		t.Fatal(view)
+	}
+	if len(m.accounts) != 0 {
+		t.Fatal("assessment created account rows")
+	}
+	if len(m.recent) != 1 {
+		t.Fatal("progress flooded recent results", m.recent)
+	}
+	e.Status = "completed"
+	e.Count = 1000
+	m.Update(e)
+	if m.tasks[key].status != "completed" {
+		t.Fatal(m.tasks[key])
+	}
+	m.Update(DoneMsg{})
+	if !strings.Contains(m.View(), "GCPBuster • finished") {
+		t.Fatal(m.View())
+	}
+}

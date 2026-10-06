@@ -17,6 +17,9 @@ import (
 type progressSinkKey struct{}
 
 func progressSink(ctx context.Context) func(inventory.ProgressEvent) {
+	if ctx == nil {
+		return nil
+	}
 	f, _ := ctx.Value(progressSinkKey{}).(func(inventory.ProgressEvent))
 	return f
 }

@@ -273,7 +273,9 @@ func scanCommand() *cobra.Command {
 		}
 		if len(scopes) > 0 && resolveRoles {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Resolving IAM role definitions")
+			finishRoles := assessmentStage(cmd, "role-resolution")
 			client.ResolveRoles(cmd.Context(), &snap)
+			finishRoles()
 		}
 		if err := cmd.Context().Err(); err != nil {
 			return err
@@ -310,10 +312,12 @@ func scanCommand() *cobra.Command {
 		}
 		snap.Coverage = append(snap.Coverage, inventory.Coverage{Source: "assessment-limitations", Status: "notice", Error: "Cloud Asset Inventory is eventually consistent and does not include every service/field. Direct IAM policies are not effective-permission calculations. Parent-chain IAM collection requires --ancestor-iam. IAM deny, access boundaries, VPC service controls and general endpoint reachability are not resolved. Selected effective organization-policy guardrails require --org-policy-checks; other constraints remain unassessed. Workspace DWD, Gmail and Drive checks require explicit offline exports. Storage anonymous probes, object/workload-source content and Cloud Logging scans are opt-in; limits and coverage records bound those results. No secret-manager payloads or message bodies are downloaded."})
 		if client.SecretCapture != nil {
+			finishSecrets := assessmentStage(cmd, "local-secret-analysis")
 			if len(files) > 0 {
 				client.SecretCapture.CaptureInventory(snap.Assets)
 			}
 			prepareSecrets(cmd.Context(), &snap, client.SecretCapture, redactSecrets, kingfisherSelected, plaintextSelected, kingfisher.Run)
+			finishSecrets()
 		} else if redactSecrets {
 			snap.SecretValueMode = "redacted"
 		}
@@ -400,6 +404,7 @@ func mergeAssets(in []inventory.Asset) []inventory.Asset {
 }
 
 func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, snap inventory.Snapshot, selected []checks.Check, resume bool) error {
+	finishPreparation := assessmentStage(cmd, "assessment-preparation")
 	if snap.SecretValueMode == "redacted" {
 		redactSuppliedSecretAssets(&snap)
 	}
@@ -499,6 +504,7 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 	if err := e.UpsertProject(ctx, target, "Explicitly selected inventory"); err != nil {
 		return err
 	}
+	finishPreparation()
 	failed := false
 	secretFiles := map[string]string{}
 	for _, c := range snap.Coverage {
@@ -508,12 +514,18 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 		}
 	}
 	for _, c := range selected {
+		assessmentProgress(cmd, inventory.ProgressEvent{Phase: "module", Scope: target, Collector: c.ID, Status: "queued", Total: len(snap.Assets)})
+	}
+	for _, c := range selected {
 		if resume && done[target+"|"+c.ID] {
+			assessmentProgress(cmd, inventory.ProgressEvent{Phase: "module", Scope: target, Collector: c.ID, Status: "completed", Count: len(snap.Assets), Total: len(snap.Assets), Cached: true})
 			continue
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		started := time.Now()
+		assessmentProgress(cmd, inventory.ProgressEvent{Phase: "module", Scope: target, Collector: c.ID, Status: "started", Total: len(snap.Assets)})
 		if _, err := e.DB().ExecContext(ctx, `DELETE FROM findings WHERE module=?`, c.ID); err != nil {
 			return err
 		}
@@ -521,7 +533,38 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 			return err
 		}
 		applicable, hits := 0, 0
+		scanned := 0
+		lastProgress := started
+		buffer := make([]findings.Finding, 0, engagement.MaxFindingBatch)
+		emit := func(status string) {
+			assessmentProgress(cmd, inventory.ProgressEvent{Phase: "module", Scope: target, Collector: c.ID, Status: status, Count: scanned, Total: len(snap.Assets), Findings: hits, Duration: time.Since(started)})
+			lastProgress = time.Now()
+		}
+		flush := func() error {
+			if len(buffer) == 0 {
+				return nil
+			}
+			if time.Since(lastProgress) >= 2*time.Second {
+				emit("progress")
+			}
+			if err := e.WriteBatch(ctx, buffer); err != nil {
+				emit("failed")
+				_ = e.MarkModule(ctx, target, c.ID, "failed", "finding batch write failed or cancelled")
+				return err
+			}
+			clear(buffer)
+			buffer = buffer[:0]
+			return nil
+		}
 		for _, a := range snap.Assets {
+			if err := ctx.Err(); err != nil {
+				emit("cancelled")
+				return err
+			}
+			scanned++
+			if time.Since(lastProgress) >= 2*time.Second {
+				emit("progress")
+			}
 			if !c.Applies(a) {
 				continue
 			}
@@ -548,12 +591,21 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 						r.Evidence["saved_file"] = file
 					}
 				}
-				if err := e.Write(ctx, f); err != nil {
-					_ = e.MarkModule(ctx, target, c.ID, "failed", err.Error())
+				if err := ctx.Err(); err != nil {
+					emit("cancelled")
 					return err
 				}
+				buffer = append(buffer, f)
 				hits++
+				if len(buffer) == engagement.MaxFindingBatch {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
 			}
+		}
+		if err := flush(); err != nil {
+			return err
 		}
 		status, note := "completed", fmt.Sprintf("%d applicable records evaluated", applicable)
 		if applicable == 0 {
@@ -563,6 +615,7 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 		if err := e.MarkModule(ctx, target, c.ID, status, note); err != nil {
 			return err
 		}
+		emit(status)
 		fmt.Fprintf(cmd.OutOrStdout(), "%-30s %-10s %d findings (%d records)\n", c.ID, status, hits, applicable)
 	}
 	status := "completed"
@@ -572,9 +625,11 @@ func assess(ctx context.Context, cmd *cobra.Command, e *engagement.Engagement, s
 	if err := e.MarkProject(ctx, target, status, ""); err != nil {
 		return err
 	}
+	finishExport := assessmentStage(cmd, "report-export")
 	if err := report.Export(e); err != nil {
 		return err
 	}
+	finishExport()
 	fmt.Fprintf(cmd.OutOrStdout(), "Report: %s\n", filepath.Join(e.Dir, "report.html"))
 	if failed {
 		return errors.New("assessment saved with collection failures; review coverage before interpreting findings")

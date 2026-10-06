@@ -110,6 +110,8 @@ The **Accounts** tab groups scheduled collection work by verified GCP project ID
 
 Live collection excludes project IDs starting with `sys-` by default. This is a name-prefix heuristic, not confirmation of Apps Script ownership or safety. Excluded projects are recorded as skipped coverage and do not run project collectors. Use `--include-system-projects` to include them. Offline inventories are not filtered. The selection policy is part of the resume configuration; changing it, or resuming pre-policy checkpoints, requires a new engagement directory.
 
+Collection completion is not scan completion: the Progress tab separately shows local secret analysis, assessment preparation, running checks (scanned inventory records and finding counts), and report export. In-check updates are emitted approximately every two seconds as evaluation proceeds; a single blocking operation may take longer. Findings are committed in transactions of at most 256 rows without disabling SQLite durability. Interrupted/failed checks are not marked completed; resume deletes their partial findings before rerunning them against the same inventory.
+
 Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HTML directly or serve it locally:
 
 ```bash
