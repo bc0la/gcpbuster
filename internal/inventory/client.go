@@ -80,7 +80,9 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("viewer-only policy: malformed gcloud authentication configuration")
 		}
-		if value, exists := auth["impersonate_service_account"]; exists {
+		// gcloud's JSON formatter represents an unset property as null.
+		// Only a non-null value can configure impersonation.
+		if value, exists := auth["impersonate_service_account"]; exists && value != nil {
 			account, ok := value.(string)
 			if !ok || account != "" {
 				return "", fmt.Errorf("viewer-only policy: configured gcloud service-account impersonation is not permitted; use a non-impersonating identity or --token-env")

@@ -39,7 +39,7 @@ exit 3
 }
 
 func TestAccessTokenBlocksImplicitImpersonation(t *testing.T) {
-	for _, configuration := range []string{`{"auth":{"impersonate_service_account":"PRIVATE@example.com"}}`, `{"auth":{"impersonate_service_account":["PRIVATE"]}}`, `null`, `not-json`, `{"auth":null}`} {
+	for _, configuration := range []string{`{"auth":{"impersonate_service_account":"PRIVATE@example.com"}}`, `{"auth":{"impersonate_service_account":["PRIVATE"]}}`, `{"auth":{"impersonate_service_account":false}}`, `{"auth":{"impersonate_service_account":42}}`, `null`, `not-json`, `{"auth":null}`} {
 		t.Run(configuration, func(t *testing.T) {
 			log := fakeAuthGcloud(t, configuration)
 			c := Client{}
@@ -56,7 +56,7 @@ func TestAccessTokenBlocksImplicitImpersonation(t *testing.T) {
 }
 
 func TestAccessTokenPinsNoImpersonationAndCaches(t *testing.T) {
-	for _, configuration := range []string{`{}`, `{"auth":{}}`, `{"auth":{"impersonate_service_account":""}}`} {
+	for _, configuration := range []string{`{}`, `{"auth":{}}`, `{"auth":{"impersonate_service_account":""}}`, `{"auth":{"impersonate_service_account":null}}`} {
 		t.Run(configuration, func(t *testing.T) {
 			log := fakeAuthGcloud(t, configuration)
 			c := Client{}
