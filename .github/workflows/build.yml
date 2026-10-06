@@ -56,6 +56,8 @@ jobs:
         env:
           GCPBUSTER_KINGFISHER_SMOKE: '1'
         run: |
+          mkdir -p .tools/kingfisher-v1.112.0
+          cp dist/bundle/.tools/kingfisher-v1.112.0/kingfisher .tools/kingfisher-v1.112.0/kingfisher
           export PATH="$PWD/dist/bundle/.tools/kingfisher-v1.112.0:$PATH"
           go test ./cmd/gcpbuster ./internal/kingfisher \
             -run 'InstalledKingfisherCLIReporting|OfficialKingfisherSmoke|Pinned' -count=1
