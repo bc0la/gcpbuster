@@ -13,9 +13,9 @@ type viewerFamily struct {
 	collect []viewerCollector
 }
 type viewerTask struct {
-	scope, family string
-	run           func()
-	out           *Snapshot
+	scope, family, account string
+	run                    func()
+	out                    *Snapshot
 }
 
 // runViewerTasks uses one global pool for a stage: projects never create nested
@@ -48,6 +48,11 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 		c.ReportProgress(ProgressEvent{Phase: "scheduler", Collector: stage, Status: status, Total: len(tasks), Queued: queued, Running: running, Completed: completed, Cancelled: cancelled})
 	}
 	emitState("started")
+	// Publish the whole plan before any starts so per-project views can show
+	// queued work even when their project has not reached a worker yet.
+	for _, task := range tasks {
+		c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Account: task.account, Collector: task.family, Status: "queued"})
+	}
 	queue := make(chan viewerTask)
 	finished := make(chan string, n)
 	var wg sync.WaitGroup
@@ -62,6 +67,7 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 					cancelled++
 					emitState("progress")
 					stateMu.Unlock()
+					c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Account: task.account, Collector: task.family, Status: "cancelled"})
 					finished <- task.scope
 					continue
 				}
@@ -70,13 +76,13 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 				emitState("progress")
 				stateMu.Unlock()
 				started := time.Now()
-				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: "started"})
+				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Account: task.account, Collector: task.family, Status: "started"})
 				restored := false
 				cacheable := c.CollectionCheckpoint != nil && task.out != nil && checkpointFamily(task.family)
 				if cacheable {
 					saved, found, err := c.CollectionCheckpoint.Load(ctx, task.scope, task.family)
 					if err != nil {
-						c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Collector: task.family, Status: "failed", Reason: "checkpoint read failed; collecting again"})
+						c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Account: task.account, Collector: task.family, Status: "failed", Reason: "checkpoint read failed; collecting again"})
 					} else if found && checkpointComplete(saved) {
 						*task.out = saved
 						restored = true
@@ -103,9 +109,9 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 				if ctx.Err() != nil {
 					status = "cancelled"
 				} else if restored {
-					c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Collector: task.family, Status: "restored", Count: count})
+					c.ReportProgress(ProgressEvent{Phase: "checkpoint", Scope: task.scope, Account: task.account, Collector: task.family, Status: "restored", Count: count})
 				}
-				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: status, Count: count, Failures: failures, Duration: time.Since(started)})
+				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Account: task.account, Cached: restored, Collector: task.family, Status: status, Count: count, Failures: failures, Duration: time.Since(started)})
 				stateMu.Lock()
 				running--
 				if status == "cancelled" {
@@ -160,6 +166,11 @@ dispatch:
 	}
 	close(queue)
 	wg.Wait()
+	// Pending tasks never reached a worker but still need a terminal event so
+	// Accounts cannot retain stale queued counts after cancellation.
+	for _, task := range pending {
+		c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Account: task.account, Collector: task.family, Status: "cancelled"})
+	}
 	stateMu.Lock()
 	status := "completed"
 	if ctx.Err() != nil {

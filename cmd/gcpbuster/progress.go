@@ -32,6 +32,7 @@ type scanProgress struct {
 	done                       chan struct{}
 	once                       sync.Once
 	sink                       func(inventory.ProgressEvent)
+	activeTasks                map[string]bool
 }
 
 func newScanProgress(w io.Writer, verbose bool) *scanProgress {
@@ -39,7 +40,7 @@ func newScanProgress(w io.Writer, verbose bool) *scanProgress {
 }
 
 func newScanProgressWithSink(w io.Writer, verbose bool, sink func(inventory.ProgressEvent)) *scanProgress {
-	p := &scanProgress{writer: &progressWriter{out: w}, verbose: verbose, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{}), sink: sink}
+	p := &scanProgress{writer: &progressWriter{out: w}, verbose: verbose, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{}), sink: sink, activeTasks: make(map[string]bool)}
 	go func() {
 		defer close(p.done)
 		ticker := time.NewTicker(15 * time.Second)
@@ -77,13 +78,21 @@ func (p *scanProgress) Report(e inventory.ProgressEvent) {
 		return
 	}
 	if e.Phase == "collector" {
+		key := e.Scope + "\x00" + e.Collector
 		if e.Status == "started" {
-			p.active++
+			if !p.activeTasks[key] {
+				p.active++
+				p.activeTasks[key] = true
+			}
 		} else if e.Status == "completed" || e.Status == "failed" || e.Status == "cancelled" {
-			if p.active > 0 {
+			if p.activeTasks[key] {
 				p.active--
+				delete(p.activeTasks, key)
 			}
 			p.finished++
+		}
+		if e.Status == "queued" && !p.verbose {
+			return
 		}
 	}
 	if e.Phase == "request" {

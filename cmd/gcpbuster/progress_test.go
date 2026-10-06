@@ -57,3 +57,22 @@ func TestScanConcurrencyFlagValidationAndDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestQueuedCancellationDoesNotRemoveRunningCollector(t *testing.T) {
+	var output bytes.Buffer
+	p := newScanProgress(&output, false)
+	defer p.Close()
+	p.Report(inventory.ProgressEvent{Phase: "collector", Scope: "projects/a", Collector: "redis", Status: "started"})
+	p.Report(inventory.ProgressEvent{Phase: "collector", Scope: "projects/b", Collector: "redis", Status: "queued"})
+	p.Report(inventory.ProgressEvent{Phase: "collector", Scope: "projects/b", Collector: "redis", Status: "cancelled"})
+	if p.active != 1 {
+		t.Fatalf("running collector count = %d", p.active)
+	}
+	if strings.Contains(output.String(), ": queued") {
+		t.Fatal("nonverbose queued output")
+	}
+	p.Report(inventory.ProgressEvent{Phase: "collector", Scope: "projects/a", Collector: "redis", Status: "completed"})
+	if p.active != 0 {
+		t.Fatal(p.active)
+	}
+}

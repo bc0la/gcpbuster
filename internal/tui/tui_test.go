@@ -154,3 +154,84 @@ func TestProgramLifecycleAndCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountsPlannedCountsFailuresAndCached(t *testing.T) {
+	m := New(nil)
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	for _, family := range []string{"storage", "sql", "compute", "iam"} {
+		m.Update(ProgressMsg{Phase: "collector", Account: "demo", Scope: "projects/123", Collector: family, Status: "queued"})
+	}
+	m.Update(ProgressMsg{Phase: "collector", Scope: "projects/123", Collector: "metadata", Status: "completed"})
+	m.Update(ProgressMsg{Phase: "collector", Account: "demo", Scope: "projects/123", Collector: "sql", Status: "completed", Failures: 2})
+	m.Update(ProgressMsg{Phase: "collector", Account: "demo", Scope: "projects/demo", Collector: "storage", Status: "completed", Cached: true})
+	m.Update(ProgressMsg{Phase: "collector", Account: "demo", Scope: "projects/123", Collector: "compute", Status: "started"})
+	m.Update(ProgressMsg{Phase: "collector", Account: "demo", Scope: "projects/123", Collector: "iam", Status: "cancelled"})
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	view := m.View()
+	if len(m.accounts) != 1 || !strings.Contains(view, "total=4 Q=0 R=1 C=1 F=1 X=1 cached=1") || !strings.Contains(view, "3/4 (75%)") {
+		t.Fatal(view)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	p := m.accounts["demo"]["compute"]
+	p.started = time.Now().Add(-3 * time.Second)
+	m.accounts["demo"]["compute"] = p
+	view = m.View()
+	if !strings.Contains(view, "sql: partial") || !strings.Contains(view, "[cached]") || !strings.Contains(view, "iam: cancelled") {
+		t.Fatal(view)
+	}
+	if strings.Contains(view, "compute: running • records=0 failures=0 • 0s") {
+		t.Fatal("running elapsed must advance", view)
+	}
+}
+
+func TestAccountsNavigationManyProjectsAndFamilies(t *testing.T) {
+	m := New(nil)
+	m.Update(tea.WindowSizeMsg{Width: 24, Height: 12})
+	for i := 0; i < 150; i++ {
+		for j := 0; j < 40; j++ {
+			m.Update(ProgressMsg{Phase: "collector", Account: fmt.Sprintf("p%03d", i), Scope: "projects/123", Collector: fmt.Sprintf("family%02d", j), Status: "queued"})
+		}
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.tab != 2 {
+		t.Fatal("reverse navigation", m.tab)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	if m.accountSelection != 149 {
+		t.Fatal(m.accountSelection)
+	}
+	if !strings.Contains(m.View(), "p149") {
+		t.Fatal(m.View())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	if m.accountTop != 39 || !strings.Contains(m.View(), "family39") {
+		t.Fatal(m.View())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.accountTop != 0 {
+		t.Fatal(m.accountTop)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	if m.accountSelection != 0 {
+		t.Fatal(m.accountSelection)
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if len([]rune(line)) > 24 {
+			t.Fatal(line)
+		}
+	}
+	if len(strings.Split(m.View(), "\n")) > 12 {
+		t.Fatal(m.View())
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil || m.done {
+		t.Fatal("q quit")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != 0 {
+		t.Fatal("forward navigation", m.tab)
+	}
+}

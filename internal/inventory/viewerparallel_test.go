@@ -204,6 +204,55 @@ func TestViewerTaskSchedulerProgressAccounting(t *testing.T) {
 	}
 }
 
+func TestViewerTaskAccountPlanAndCancellationEvents(t *testing.T) {
+	for _, cancelWork := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelWork), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var events []ProgressEvent
+			c := &Client{Concurrency: 1, Progress: func(e ProgressEvent) {
+				if e.Phase == "collector" {
+					events = append(events, e)
+				}
+			}}
+			var tasks []viewerTask
+			for i := 0; i < 12; i++ {
+				account := fmt.Sprintf("demo-%d", i%2)
+				tasks = append(tasks, viewerTask{scope: "projects/123 (" + account + ")", account: account, family: fmt.Sprint(i), run: func() {
+					if cancelWork {
+						cancel()
+					}
+				}})
+			}
+			c.runViewerTasks(ctx, tasks)
+			planned, terminal := map[string]int{}, map[string]int{}
+			for i, e := range events {
+				key := e.Account + "|" + e.Collector
+				if e.Account == "" {
+					t.Fatal("project account missing")
+				}
+				if i < len(tasks) && e.Status != "queued" {
+					t.Fatal("worker started before complete plan emitted")
+				}
+				switch e.Status {
+				case "queued":
+					planned[key]++
+				case "completed", "cancelled":
+					terminal[key]++
+				}
+			}
+			if len(planned) != len(tasks) || len(terminal) != len(tasks) {
+				t.Fatalf("queued/terminal counts lost: %v / %v", planned, terminal)
+			}
+			for key, n := range planned {
+				if n != 1 || terminal[key] != 1 {
+					t.Fatalf("task duplicated or not terminal: %s", key)
+				}
+			}
+		})
+	}
+}
+
 // Exercise the actual ViewerCloud entry point, not only the scheduler. Both
 // project metadata and independent project/service requests must overlap, and
 // serial/parallel output must be byte-identical despite reversed completion.

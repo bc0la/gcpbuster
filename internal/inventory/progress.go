@@ -12,6 +12,8 @@ import (
 // query parameters, or resource URLs. Callbacks must not call ReportProgress.
 type ProgressEvent struct {
 	Phase, Scope, Collector, Status              string
+	Account                                      string // Verified project ID for per-project progress; blank for hierarchy metadata.
+	Cached                                       bool   // Completed collector output restored from a private checkpoint.
 	Count                                        int
 	Failures                                     int
 	Duration                                     time.Duration

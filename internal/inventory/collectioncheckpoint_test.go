@@ -42,6 +42,12 @@ func (s *memoryCollectionCheckpoint) Save(_ context.Context, scope, family strin
 func TestCollectionCheckpointReusesOnlySuccessfulMetadata(t *testing.T) {
 	store := &memoryCollectionCheckpoint{rows: map[string][]byte{}}
 	c := &Client{Concurrency: 3, CollectionCheckpoint: store, SecretCapture: NewSecretCapture(0, 0, 0)}
+	cached := 0
+	c.Progress = func(e ProgressEvent) {
+		if e.Phase == "collector" && e.Status == "completed" && e.Cached {
+			cached++
+		}
+	}
 	var runs [3]int
 	collect := func(fail bool) []Snapshot {
 		out := make([]Snapshot, 3)
@@ -71,6 +77,9 @@ func TestCollectionCheckpointReusesOnlySuccessfulMetadata(t *testing.T) {
 	}
 	if len(store.rows) != 2 || store.saves != 2 {
 		t.Fatalf("unsafe/failed tasks cached: %#v", store)
+	}
+	if cached != 3 {
+		t.Fatalf("cached completions not tagged: %d", cached)
 	}
 }
 

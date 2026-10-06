@@ -49,7 +49,7 @@ func (c *Client) ViewerCloud(ctx context.Context, scope string) Snapshot {
 			j := (round + i) % len(groups)
 			family := groups[j]
 			i, j, project, family := i, j, project, family
-			jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", family: family.name, out: &results[i][j], run: func() {
+			jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", account: project.id, family: family.name, out: &results[i][j], run: func() {
 				for _, collect := range family.collect {
 					if ctx.Err() != nil {
 						break
@@ -76,7 +76,7 @@ func (c *Client) ViewerCloud(ctx context.Context, scope string) Snapshot {
 			continue
 		}
 		i, project := i, project
-		jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", family: "iam-search", out: &combined[i], run: func() {
+		jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", account: project.id, family: "iam-search", out: &combined[i], run: func() {
 			c.viewerSearchIAM(ctx, &combined[i], project.number)
 		}})
 	}
