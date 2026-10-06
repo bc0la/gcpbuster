@@ -24,19 +24,13 @@ func TestViewerSQLBackupsPaginationProjectionAndDuplicateParents(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/projects/demo/instances/db/backupRuns":
-			if r.URL.Query().Get("fields") != "items(id,instance),nextPageToken" || r.URL.Query().Get("maxResults") != "100" {
+			if r.URL.Query().Get("fields") != viewerSQLBackupListFields || r.URL.Query().Get("maxResults") != "100" {
 				t.Fatal(r.URL)
 			}
 			if r.URL.Query().Get("pageToken") == "" {
-				return response(200, `{"items":[{"id":"123","instance":"db"}],"nextPageToken":"next"}`), nil
+				return response(200, `{"items":[{"id":"123","instance":"db","status":"SUCCESSFUL","type":"AUTOMATED","backupKind":"PHYSICAL","location":"us","startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T01:00:00Z","error":{"message":"PRIVATE"},"description":"PRIVATE","selfLink":"https://never-follow.invalid/PRIVATE","contents":"PRIVATE"}],"nextPageToken":"next"}`), nil
 			}
-			return response(200, `{"items":[{"id":"123","instance":"db"},{"id":"124","instance":"db"}]}`), nil
-		case "/v1/projects/demo/instances/db/backupRuns/123", "/v1/projects/demo/instances/db/backupRuns/124":
-			if r.URL.Query().Get("fields") != viewerSQLBackupFields {
-				t.Fatal(r.URL)
-			}
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-			return response(200, `{"id":"`+id+`","instance":"db","status":"SUCCESSFUL","type":"AUTOMATED","backupKind":"PHYSICAL","location":"us","startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T01:00:00Z","error":{"message":"PRIVATE"},"description":"PRIVATE","selfLink":"https://never-follow.invalid/PRIVATE","contents":"PRIVATE"}`), nil
+			return response(200, `{"items":[{"id":"123","instance":"db","status":"SUCCESSFUL"},{"id":"124","instance":"db","status":"SUCCESSFUL"}]}`), nil
 		default:
 			t.Fatal(r.URL)
 			return nil, nil
@@ -45,7 +39,7 @@ func TestViewerSQLBackupsPaginationProjectionAndDuplicateParents(t *testing.T) {
 	s := sqlUserSnapshot("db", "db")
 	c.CollectViewerSQLBackups(context.Background(), &s, "demo", "projects/123")
 	items := List(Get(s.Assets[0].Resource.Data, "_gcpbusterSQLBackups", "items"))
-	if calls != 4 || hasCoverage(s, "failed") || len(items) != 2 || Str(Obj(items[0])["status"]) != "SUCCESSFUL" {
+	if calls != 2 || hasCoverage(s, "failed") || len(items) != 2 || Str(Obj(items[0])["status"]) != "SUCCESSFUL" {
 		t.Fatal(s, calls)
 	}
 	b, _ := json.Marshal(s)
@@ -54,17 +48,14 @@ func TestViewerSQLBackupsPaginationProjectionAndDuplicateParents(t *testing.T) {
 	}
 }
 
-func TestViewerSQLBackupsMalformedDetailContinues(t *testing.T) {
-	for _, body := range []string{`null`, `{"id":"1","instance":"elsewhere","status":"SUCCESSFUL"}`, `{"id":"2","instance":"db","status":"SUCCESSFUL"}`, `{"id":"1","instance":"db"}`, `{"id":"1","instance":"db","status":42}`, `{"id":"1","instance":"db","status":"SUCCESSFUL","startTime":"bad"}`, `{"id":"1","instance":"db","status":"SUCCESSFUL","location":{}}`} {
+func TestViewerSQLBackupsMalformedMetadataContinues(t *testing.T) {
+	for _, body := range []string{`{"id":"1","instance":"db"}`, `{"id":"1","instance":"db","status":42}`, `{"id":"1","instance":"db","status":"SUCCESSFUL","startTime":"bad"}`, `{"id":"1","instance":"db","status":"SUCCESSFUL","location":{}}`} {
 		t.Run(body, func(t *testing.T) {
 			c := sqlBackupClient(t, func(r *http.Request) (*http.Response, error) {
-				if strings.HasSuffix(r.URL.Path, "/backupRuns") {
-					return response(200, `{"items":[{"id":"1","instance":"db"},{"id":"2","instance":"db"}]}`), nil
+				if !strings.HasSuffix(r.URL.Path, "/backupRuns") {
+					t.Fatal("redundant detail request", r.URL)
 				}
-				if strings.HasSuffix(r.URL.Path, "/1") {
-					return response(200, body), nil
-				}
-				return response(200, `{"id":"2","instance":"db","status":"FAILED"}`), nil
+				return response(200, `{"items":[`+body+`,{"id":"2","instance":"db","status":"FAILED"}]}`), nil
 			})
 			s := sqlUserSnapshot("db")
 			c.CollectViewerSQLBackups(context.Background(), &s, "demo", "projects/123")
@@ -97,16 +88,16 @@ func TestViewerSQLBackupsPermissionsAndServerDenial(t *testing.T) {
 		calls := 0
 		c := sqlBackupClient(t, func(r *http.Request) (*http.Response, error) {
 			calls++
-			if strings.HasSuffix(r.URL.Path, "/backupRuns") {
-				return response(200, `{"items":[{"id":"1","instance":"db"}]}`), nil
+			if permission == "server-denial" {
+				return response(403, "PRIVATE"), nil
 			}
-			return response(403, "PRIVATE"), nil
+			return response(200, `{"items":[{"id":"1","instance":"db","status":"SUCCESSFUL"}]}`), nil
 		})
 		delete(c.viewerPolicy.permissions, permission)
 		s := sqlUserSnapshot("db")
 		c.CollectViewerSQLBackups(context.Background(), &s, "demo", "projects/123")
-		want := map[string]int{"cloudsql.backupRuns.list": 0, "cloudsql.backupRuns.get": 1, "server-denial": 2}[permission]
-		if calls != want || !hasCoverage(s, "failed") {
+		want := map[string]int{"cloudsql.backupRuns.list": 0, "cloudsql.backupRuns.get": 1, "server-denial": 1}[permission]
+		if calls != want || hasCoverage(s, "failed") != (permission != "cloudsql.backupRuns.get") {
 			t.Fatal(permission, s, calls)
 		}
 		b, _ := json.Marshal(s)
@@ -119,12 +110,12 @@ func TestViewerSQLBackupsPermissionsAndServerDenial(t *testing.T) {
 func TestViewerSQLBackupsBoundAndScope(t *testing.T) {
 	rows := []any{}
 	for i := 1; i <= viewerSQLBackupLimit+1; i++ {
-		rows = append(rows, Object{"id": strconv.Itoa(i), "instance": "db"})
+		rows = append(rows, Object{"id": strconv.Itoa(i), "instance": "db", "status": "SUCCESSFUL"})
 	}
 	body, _ := json.Marshal(Object{"items": rows})
 	c := sqlBackupClient(t, func(r *http.Request) (*http.Response, error) {
 		if !strings.HasSuffix(r.URL.Path, "/backupRuns") {
-			t.Fatal("denied detail reached network")
+			t.Fatal("redundant detail reached network")
 		}
 		return response(200, string(body)), nil
 	})
@@ -148,13 +139,10 @@ func TestViewerSQLBackupsLatePageFailureKeepsEvidenceAndOtherInstance(t *testing
 		if strings.Contains(r.URL.Path, "/second/") {
 			return response(200, `{}`), nil
 		}
-		if strings.HasSuffix(r.URL.Path, "/1") {
-			return response(200, `{"id":"1","instance":"first","status":"SUCCESSFUL"}`), nil
-		}
 		if r.URL.Query().Get("pageToken") != "" {
 			return response(403, "PRIVATE"), nil
 		}
-		return response(200, `{"items":[{"id":"1","instance":"first"}],"nextPageToken":"next"}`), nil
+		return response(200, `{"items":[{"id":"1","instance":"first","status":"SUCCESSFUL"}],"nextPageToken":"next"}`), nil
 	})
 	s := sqlUserSnapshot("first", "second")
 	c.CollectViewerSQLBackups(context.Background(), &s, "demo", "projects/123")

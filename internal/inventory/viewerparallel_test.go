@@ -81,16 +81,77 @@ func TestViewerTaskPoolCancellationDoesNotStartQueuedWork(t *testing.T) {
 	}
 }
 
+func TestViewerTaskPoolPerProjectLimitDoesNotStarveOtherProjects(t *testing.T) {
+	c := &Client{Concurrency: 4, PerProjectConcurrency: 2}
+	gate := make(chan struct{})
+	var release sync.Once
+	defer release.Do(func() { close(gate) })
+	started := make(chan string, 4)
+	var mu sync.Mutex
+	active := map[string]int{}
+	var violation atomic.Bool
+	var tasks []viewerTask
+	for _, scope := range []string{"projects/1", "projects/2"} {
+		for i := 0; i < 8; i++ {
+			scope := scope
+			tasks = append(tasks, viewerTask{scope: scope, run: func() {
+				mu.Lock()
+				active[scope]++
+				if active[scope] > 2 {
+					violation.Store(true)
+				}
+				mu.Unlock()
+				select {
+				case started <- scope:
+				default:
+				}
+				<-gate
+				mu.Lock()
+				active[scope]--
+				mu.Unlock()
+			}})
+		}
+	}
+	done := make(chan struct{})
+	go func() { c.runViewerTasks(context.Background(), tasks); close(done) }()
+	counts := map[string]int{}
+	for i := 0; i < 4; i++ {
+		select {
+		case scope := <-started:
+			counts[scope]++
+		case <-time.After(5 * time.Second):
+			t.Fatal("busy project starved another project")
+		}
+	}
+	if counts["projects/1"] != 2 || counts["projects/2"] != 2 || violation.Load() {
+		t.Fatalf("per-project limits violated: %v", counts)
+	}
+	release.Do(func() { close(gate) })
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler did not finish")
+	}
+	if violation.Load() {
+		t.Fatal("per-project concurrency exceeded")
+	}
+}
+
 func TestViewerFamilyDependencyOrder(t *testing.T) {
 	c := &Client{}
 	families := c.viewerFamilies()
 	names := map[string][]string{}
+	collectors := 0
 	for _, family := range families {
 		for _, collect := range family.collect {
+			collectors++
 			fn := runtime.FuncForPC(reflect.ValueOf(collect).Pointer()).Name()
 			fn = strings.TrimSuffix(fn[strings.LastIndex(fn, ".")+1:], "-fm")
 			names[family.name] = append(names[family.name], fn)
 		}
+	}
+	if len(families) != 34 || collectors != 58 {
+		t.Fatalf("collector topology changed: %d families / %d collectors", len(families), collectors)
 	}
 	for family, expected := range map[string][]string{
 		"alloydb":                        {"CollectViewerAlloyDB", "CollectViewerAlloyDBUsers"},
@@ -108,11 +169,46 @@ func TestViewerFamilyDependencyOrder(t *testing.T) {
 	}
 }
 
+func TestViewerTaskSchedulerProgressAccounting(t *testing.T) {
+	for _, cancelWork := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelWork), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var events []ProgressEvent
+			c := &Client{Concurrency: 1, Progress: func(e ProgressEvent) {
+				if e.Phase == "scheduler" {
+					events = append(events, e)
+				}
+			}}
+			tasks := make([]viewerTask, 12)
+			for i := range tasks {
+				tasks[i] = viewerTask{family: "fixture", run: func() {
+					if cancelWork {
+						cancel()
+					}
+				}}
+			}
+			c.runViewerTasks(ctx, tasks)
+			previous := 0
+			for _, e := range events {
+				if e.Total != len(tasks) || e.Queued+e.Running+e.Completed+e.Cancelled != e.Total || e.Running > 1 || e.Completed < previous {
+					t.Fatalf("invalid accounting: %+v", e)
+				}
+				previous = e.Completed
+			}
+			last := events[len(events)-1]
+			if last.Running != 0 || last.Queued != 0 || (!cancelWork && last.Completed != len(tasks)) || (cancelWork && last.Cancelled != len(tasks)) {
+				t.Fatalf("invalid terminal accounting: %+v", last)
+			}
+		})
+	}
+}
+
 // Exercise the actual ViewerCloud entry point, not only the scheduler. Both
 // project metadata and independent project/service requests must overlap, and
 // serial/parallel output must be byte-identical despite reversed completion.
 func TestViewerCloudParallelProjectsAndFamiliesDeterministic(t *testing.T) {
-	collect := func(limit int) (Snapshot, int32, bool, bool) {
+	collect := func(limit int) (Snapshot, int32, bool, bool, bool) {
 		var active, peak atomic.Int32
 		var metadataActive, serviceActive atomic.Int32
 		var metadataOverlap, serviceOverlap atomic.Bool
@@ -192,10 +288,23 @@ func TestViewerCloudParallelProjectsAndFamiliesDeterministic(t *testing.T) {
 			return response(404, `{}`), nil
 		})
 		c.Concurrency = limit
-		return c.ViewerCloud(context.Background(), "organizations/9"), peak.Load(), metadataOverlap.Load(), serviceOverlap.Load()
+		var firstFamilies []ProgressEvent
+		c.Progress = func(e ProgressEvent) {
+			if e.Phase == "collector" && e.Status == "started" && e.Collector != "metadata" && e.Collector != "iam-search" && len(firstFamilies) < 2 {
+				firstFamilies = append(firstFamilies, e)
+			}
+		}
+		out := c.ViewerCloud(context.Background(), "organizations/9")
+		mixed := len(firstFamilies) == 2 && firstFamilies[0].Scope != firstFamilies[1].Scope && firstFamilies[0].Collector != firstFamilies[1].Collector
+		return out, peak.Load(), metadataOverlap.Load(), serviceOverlap.Load(), mixed
 	}
-	serial, serialPeak, _, _ := collect(1)
-	parallel, parallelPeak, metadata, service := collect(3)
+	serial, serialPeak, _, _, serialMixed := collect(1)
+	parallel, parallelPeak, metadata, service, _ := collect(3)
+	// Verify dispatch ordering with serial callbacks: concurrent workers may
+	// report their starts in a different order after receiving their tasks.
+	if !serialMixed {
+		t.Fatal("scheduler did not mix projects and service families")
+	}
 	if serialPeak != 1 || parallelPeak > 3 || parallelPeak < 2 || !metadata || !service {
 		t.Fatalf("serial peak=%d parallel=%d metadata overlap=%v service overlap=%v", serialPeak, parallelPeak, metadata, service)
 	}

@@ -34,6 +34,7 @@ func (c *Client) readIAMPolicy(ctx context.Context, endpoint string) (Object, er
 			h.Timeout = c.HTTP.Timeout
 		}
 	}
+	ctx = withRequestAttemptCounter(ctx)
 	for attempt := 0; attempt < 4; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(`{"options":{"requestedPolicyVersion":3}}`))
 		if err != nil {
@@ -45,7 +46,7 @@ func (c *Client) readIAMPolicy(ctx context.Context, endpoint string) (Object, er
 		if err != nil {
 			return nil, fmt.Errorf("IAM policy read transport failure or cancellation")
 		}
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 {
 			resp.Body.Close()
 			if attempt < 3 {
 				select {

@@ -129,6 +129,7 @@ func (c *Client) logPage(ctx context.Context, body Object) (Object, error) {
 			h.Timeout = c.HTTP.Timeout
 		}
 	}
+	ctx = withRequestAttemptCounter(ctx)
 	for attempt := 0; attempt < 4; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://logging.googleapis.com/v2/entries:list", bytes.NewReader(payload))
 		if err != nil {
@@ -140,7 +141,7 @@ func (c *Client) logPage(ctx context.Context, body Object) (Object, error) {
 		if err != nil {
 			return nil, fmt.Errorf("log query transport failure or cancellation")
 		}
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 {
 			resp.Body.Close()
 			if attempt < 3 {
 				select {

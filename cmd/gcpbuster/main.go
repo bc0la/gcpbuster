@@ -62,9 +62,14 @@ func scanCommand() *cobra.Command {
 	var logLookback time.Duration
 	var verbose bool
 	var concurrency int
+	var perProjectConcurrency int
+	var forceUI, noUI bool
 	cmd := &cobra.Command{Use: "scan", Short: "Assess Viewer-readable GCP metadata or offline GCP/Workspace inventory", RunE: func(cmd *cobra.Command, _ []string) error {
 		if concurrency < 1 || concurrency > 64 {
 			return errors.New("--concurrency must be between 1 and 64")
+		}
+		if perProjectConcurrency < 1 || perProjectConcurrency > 64 {
+			return errors.New("--per-project-concurrency must be between 1 and 64")
 		}
 		if impersonate != "" {
 			return errors.New("service-account impersonation is disabled: it requires authority beyond the allowed Viewer roles")
@@ -192,12 +197,12 @@ func scanCommand() *cobra.Command {
 			snap.Coverage = append(snap.Coverage, part.Coverage...)
 			snap.Coverage = append(snap.Coverage, inventory.Coverage{Source: path, Status: "provided", Count: len(part.Assets), Error: "Offline records only; freshness, omitted resources, ancestor policies and export completeness are not verified."})
 		}
-		progress := newScanProgress(cmd.ErrOrStderr(), verbose)
+		progress := newScanProgressWithSink(cmd.ErrOrStderr(), verbose, progressSink(cmd.Context()))
 		cmd.SetErr(progress.writer)
 		defer progress.Close()
-		client := &inventory.Client{TokenEnv: tokenEnv, Impersonate: impersonate, DNSChecks: dnsChecks, RefreshConfig: refreshConfig, Concurrency: concurrency, Progress: progress.Report}
+		client := &inventory.Client{TokenEnv: tokenEnv, Impersonate: impersonate, DNSChecks: dnsChecks, RefreshConfig: refreshConfig, Concurrency: concurrency, PerProjectConcurrency: perProjectConcurrency, Progress: progress.Report}
 		if len(scopes) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Collection concurrency: %d workers (use --verbose for request progress)\n", concurrency)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Collection concurrency: %d global workers, %d per project\n", concurrency, perProjectConcurrency)
 		}
 		if kingfisherSelected || plaintextSelected || parameterReferencesSelected {
 			client.SecretCapture = inventory.NewSecretCapture(10000, 4<<20, 64<<20)
@@ -305,6 +310,9 @@ func scanCommand() *cobra.Command {
 		return assess(cmd.Context(), cmd, e, snap, selected, resume)
 	}}
 	f := cmd.Flags()
+	f.BoolVar(&forceUI, "ui", false, "Use interactive Progress/Logs tabs (automatically enabled on a terminal)")
+	f.BoolVar(&noUI, "no-ui", false, "Disable terminal UI; use plain progress output")
+	f.IntVar(&perProjectConcurrency, "per-project-concurrency", 4, "Maximum parallel collection jobs per project, within --concurrency (1-64)")
 	f.BoolVar(&verbose, "verbose", false, "Show request-level progress and timings; tokens, bodies and secret values are never logged")
 	f.IntVar(&concurrency, "concurrency", 8, "Maximum parallel collection jobs across projects and service families (1-64; 1 for serial)")
 	f.BoolVar(&noSecrets, "no-secrets", false, "Skip Kingfisher; native plaintext configuration reporting remains independently selectable")
@@ -344,6 +352,10 @@ func scanCommand() *cobra.Command {
 	f.IntVar(&storage.MaxArchiveEntries, "storage-max-archive-entries", 1000, "Maximum ZIP entries inspected per object")
 	f.StringVar(&storage.Prefix, "storage-prefix", "", "Restrict storage object collection to this prefix")
 	f.BoolVar(&resume, "resume", false, "Skip completed checks only when the inventory fingerprint matches")
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return runWithTerminalUI(cmd, args, run, forceUI, noUI)
+	}
 	return cmd
 }
 

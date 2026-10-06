@@ -64,6 +64,7 @@ func (c *Client) storageGET(ctx context.Context, endpoint string, authenticated 
 			h.Timeout = c.HTTP.Timeout
 		}
 	}
+	ctx = withRequestAttemptCounter(ctx)
 	for attempt := 0; attempt < 4; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
@@ -83,7 +84,7 @@ func (c *Client) storageGET(ctx context.Context, endpoint string, authenticated 
 		if err != nil {
 			return storageResponse{}, fmt.Errorf("storage request failed (transport or cancellation)")
 		}
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 {
 			resp.Body.Close()
 			if attempt < 3 {
 				select {

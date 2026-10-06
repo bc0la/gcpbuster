@@ -33,16 +33,42 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 	if n == 0 {
 		return
 	}
+	// Counters are stage-local and emitted while holding this lock so callback
+	// consumers observe a monotonic completed count even with concurrent workers.
+	var stateMu sync.Mutex
+	queued, running, completed, cancelled := len(tasks), 0, 0, 0
+	stage := tasks[0].family
+	for _, task := range tasks {
+		if task.family != stage {
+			stage = "service-families"
+			break
+		}
+	}
+	emitState := func(status string) {
+		c.ReportProgress(ProgressEvent{Phase: "scheduler", Collector: stage, Status: status, Total: len(tasks), Queued: queued, Running: running, Completed: completed, Cancelled: cancelled})
+	}
+	emitState("started")
 	queue := make(chan viewerTask)
+	finished := make(chan string, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for task := range queue {
+				stateMu.Lock()
 				if ctx.Err() != nil {
+					queued--
+					cancelled++
+					emitState("progress")
+					stateMu.Unlock()
+					finished <- task.scope
 					continue
 				}
+				queued--
+				running++
+				emitState("progress")
+				stateMu.Unlock()
 				started := time.Now()
 				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: "started"})
 				task.run()
@@ -60,22 +86,69 @@ func (c *Client) runViewerTasks(ctx context.Context, tasks []viewerTask) {
 					status = "cancelled"
 				}
 				c.ReportProgress(ProgressEvent{Phase: "collector", Scope: task.scope, Collector: task.family, Status: status, Count: count, Failures: failures, Duration: time.Since(started)})
+				stateMu.Lock()
+				running--
+				if status == "cancelled" {
+					cancelled++
+				} else {
+					completed++
+				}
+				emitState("progress")
+				stateMu.Unlock()
+				finished <- task.scope
 			}
 		}()
 	}
+	// Match BezosBuster's per-account + global limits without having workers
+	// occupy global slots while waiting on a busy project's semaphore. Only
+	// eligible tasks are handed to a worker; other projects can make progress.
+	perProject := c.PerProjectConcurrency
+	if perProject < 1 || perProject > n {
+		perProject = n
+	}
+	active := make(map[string]int)
+	pending := append([]viewerTask(nil), tasks...)
+	inFlight := 0
 dispatch:
-	for _, task := range tasks {
+	for len(pending) > 0 || inFlight > 0 {
 		if ctx.Err() != nil {
 			break
+		}
+		eligible := -1
+		for i, task := range pending {
+			if active[task.scope] < perProject {
+				eligible = i
+				break
+			}
+		}
+		var send chan viewerTask
+		var next viewerTask
+		if eligible >= 0 && inFlight < n {
+			send, next = queue, pending[eligible]
 		}
 		select {
 		case <-ctx.Done():
 			break dispatch
-		case queue <- task:
+		case scope := <-finished:
+			active[scope]--
+			inFlight--
+		case send <- next:
+			active[next.scope]++
+			inFlight++
+			pending = append(pending[:eligible], pending[eligible+1:]...)
 		}
 	}
 	close(queue)
 	wg.Wait()
+	stateMu.Lock()
+	status := "completed"
+	if ctx.Err() != nil {
+		status = "cancelled"
+		cancelled += queued
+		queued = 0
+	}
+	emitState(status)
+	stateMu.Unlock()
 }
 
 // Dependent enrichers remain ordered in the same family and share only their

@@ -31,10 +31,15 @@ type scanProgress struct {
 	stop                       chan struct{}
 	done                       chan struct{}
 	once                       sync.Once
+	sink                       func(inventory.ProgressEvent)
 }
 
 func newScanProgress(w io.Writer, verbose bool) *scanProgress {
-	p := &scanProgress{writer: &progressWriter{out: w}, verbose: verbose, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
+	return newScanProgressWithSink(w, verbose, nil)
+}
+
+func newScanProgressWithSink(w io.Writer, verbose bool, sink func(inventory.ProgressEvent)) *scanProgress {
+	p := &scanProgress{writer: &progressWriter{out: w}, verbose: verbose, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{}), sink: sink}
 	go func() {
 		defer close(p.done)
 		ticker := time.NewTicker(15 * time.Second)
@@ -44,6 +49,9 @@ func newScanProgress(w io.Writer, verbose bool) *scanProgress {
 			case <-p.stop:
 				return
 			case <-ticker.C:
+				if p.sink != nil {
+					continue
+				}
 				p.mu.Lock()
 				fmt.Fprintf(p.writer, "Progress: %d collectors active, %d finished, %d requests completed (%s elapsed)\n", p.active, p.finished, p.requests, time.Since(p.started).Round(time.Second))
 				p.mu.Unlock()
@@ -56,8 +64,18 @@ func newScanProgress(w io.Writer, verbose bool) *scanProgress {
 func (p *scanProgress) Close() { p.once.Do(func() { close(p.stop); <-p.done }) }
 
 func (p *scanProgress) Report(e inventory.ProgressEvent) {
+	if p.sink != nil {
+		p.sink(e)
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if e.Phase == "scheduler" {
+		if e.Status == "started" || e.Status == "completed" || e.Status == "cancelled" {
+			fmt.Fprintf(p.writer, "Scheduler %s: %s (total=%d queued=%d running=%d completed=%d cancelled=%d)\n", e.Collector, e.Status, e.Total, e.Queued, e.Running, e.Completed, e.Cancelled)
+		}
+		return
+	}
 	if e.Phase == "collector" {
 		if e.Status == "started" {
 			p.active++
@@ -75,7 +93,7 @@ func (p *scanProgress) Report(e inventory.ProgressEvent) {
 		if !p.verbose {
 			return
 		}
-		fmt.Fprintf(p.writer, "  Request %s %s: %s (attempt %d, HTTP %d, %s header/transport time)\n", e.Method, e.Host, e.Status, e.Attempt, e.HTTPStatus, e.Duration.Round(time.Millisecond))
+		fmt.Fprintf(p.writer, "  Request %s %s: %s (attempt %d, HTTP %d, %s header/transport time, reason=%s, retry-after=%s)\n", e.Method, e.Host, e.Status, e.Attempt, e.HTTPStatus, e.Duration.Round(time.Millisecond), e.Reason, e.RetryAfter.Round(time.Millisecond))
 		return
 	}
 	if e.Status == "started" {

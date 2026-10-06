@@ -235,6 +235,11 @@ func viewerRequestPermissions(method, endpoint string, q url.Values) ([]string, 
 	if query.Has("userProject") || query.Has("quotaUser") || query.Has("$xgafv") {
 		return nil, fmt.Errorf("viewer-only policy: unreviewed billing or API override")
 	}
+	if u.Host == "sqladmin.googleapis.com" {
+		if err := viewerSQLMetadataQuery(method, u, query); err != nil {
+			return nil, err
+		}
+	}
 	if (u.Host == "workflows.googleapis.com" && (strings.HasSuffix(u.Path, ":listRevisions") || query.Has("revisionId"))) || (u.Host == "run.googleapis.com" && strings.Contains(u.Path, "/services/") && (strings.HasSuffix(u.Path, "/revisions") || strings.Contains(u.Path, "/revisions/"))) {
 		return historicalSecretPermissions(method, u, query)
 	}

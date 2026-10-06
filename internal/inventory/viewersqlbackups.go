@@ -11,6 +11,7 @@ import (
 
 const viewerSQLBackupLimit = 1000
 const viewerSQLBackupFields = "id,instance,status,type,backupKind,databaseVersion,location,windowStartTime,enqueuedTime,startTime,endTime"
+const viewerSQLBackupListFields = "items(" + viewerSQLBackupFields + "),nextPageToken"
 
 // CollectViewerSQLBackups reads bounded backup-record metadata, not backup
 // contents. No create/export/download/restore endpoint or selfLink is followed.
@@ -47,7 +48,10 @@ func (c *Client) viewerSQLBackupRecords(ctx context.Context, out *Snapshot, proj
 	seen := map[string]bool{}
 	partial := false
 	endpoint := "https://sqladmin.googleapis.com/v1/projects/" + projectID + "/instances/" + instance + "/backupRuns"
-	err := c.viewerPages(ctx, endpoint, url.Values{"maxResults": {"100"}, "fields": {"items(id,instance),nextPageToken"}}, func(page Object) error {
+	// The documented list response already contains BackupRun resources. Read
+	// their reviewed metadata directly instead of issuing up to 1000 redundant
+	// detail GETs per instance. No backup contents are requested.
+	err := c.viewerPages(ctx, endpoint, url.Values{"maxResults": {"100"}, "fields": {viewerSQLBackupListFields}}, func(page Object) error {
 		rows, err := viewerRows(page, "items")
 		if err != nil {
 			return err
@@ -66,11 +70,7 @@ func (c *Client) viewerSQLBackupRecords(ctx context.Context, out *Snapshot, proj
 				return fmt.Errorf("backup metadata record limit reached; remaining inventory unassessed")
 			}
 			seen[id] = true
-			metadata, readErr := c.get(ctx, endpoint+"/"+id, url.Values{"fields": {viewerSQLBackupFields}})
-			var clean Object
-			if readErr == nil {
-				clean, readErr = viewerSQLBackupProjection(metadata, instance, id)
-			}
+			clean, readErr := viewerSQLBackupProjection(d, instance, id)
 			count := 0
 			if readErr != nil {
 				partial = true
@@ -85,7 +85,7 @@ func (c *Client) viewerSQLBackupRecords(ctx context.Context, out *Snapshot, proj
 		return nil
 	})
 	if err == nil && partial {
-		err = fmt.Errorf("some backup identities or detail reads were unavailable or malformed")
+		err = fmt.Errorf("some backup identities or metadata were malformed")
 	}
 	status := "completed"
 	if err != nil {

@@ -80,8 +80,12 @@ go build -o gcpbuster ./cmd/gcpbuster
 # Explicit hierarchy traversal; reads still require Viewer on each project.
 ./gcpbuster scan --scope organizations/123456789 --engagement ./engagements/org
 
-# Request-level progress and bounded parallel collection (default: 8 workers).
-./gcpbuster scan --scope organizations/123456789 --verbose --concurrency 8 \
+# Interactive Progress/Logs tabs; 8 global workers, at most 4 per project.
+./gcpbuster scan --scope organizations/123456789 --ui \
+  --concurrency 8 --per-project-concurrency 4 --engagement ./engagements/org-ui
+
+# Plain request-level logs, useful when redirecting output or troubleshooting.
+./gcpbuster scan --scope organizations/123456789 --no-ui --verbose \
   --engagement ./engagements/org-verbose
 
 # Multiple projects, selected categories.
@@ -98,7 +102,9 @@ go build -o gcpbuster ./cmd/gcpbuster
   --engagement ./engagements/log-review
 ```
 
-Live collection prints hierarchy discovery, project and service-family starts/completions, resource counts, incomplete/failure counts and elapsed times to stderr. A 15-second heartbeat makes long waits visible. `--verbose` adds HTTP method/service/status/attempt timings without logging tokens, request paths/queries, response bodies or secret values. One collection-job worker budget spans projects and independent service families, not a separate multiplied pool per project. Dependent reads stay ordered; partial failures remain in coverage and output merging is deterministic. Use `--concurrency 1` for serial collection, or adjust from 1 to 64 for quota and resource constraints. Optional post-discovery enrichments remain separately ordered.
+On an interactive terminal, live scans automatically use a Bubble Tea interface with separate **Progress** and **Logs** tabs. Progress shows stage totals, queued/running/completed work, resource counts and failure counts; Logs keeps request-level activity separate from the overview. Press Tab or left/right arrows to switch tabs, up/down or Page Up/Page Down to scroll logs, End to follow new entries, and `q` or Ctrl+C to cancel collection. `--ui` explicitly enables the interface; `--no-ui` disables it. Non-terminal output uses plain stderr progress automatically. In plain mode, `--verbose` adds HTTP method/service/status/attempt timings; a 15-second heartbeat makes long waits visible. Neither interface logs tokens, request paths/queries, response bodies or secret values.
+
+The parallel scheduler follows BezosBuster's global and per-target limits: `--concurrency` defaults to **8** collection workers globally, and `--per-project-concurrency` defaults to **4** jobs per project within that global budget. Both accept 1–64; `--concurrency 1` makes collection serial. Fair dispatch mixes projects and independent service families without reserving workers for a busy project's queue. Dependent reads stay ordered, partial failures remain in coverage, and output merging is deterministic. Optional post-discovery enrichments remain separately ordered. HTTP 429 responses share a service-level cooldown across workers, honor bounded `Retry-After` delays and use bounded retries; cancellation interrupts waits. Lower concurrency if your organization's quotas require it. These settings do not add permissions, enable APIs or turn denied/disabled service reads into successful coverage.
 
 Each run writes `engagement.db`, `report.html`, and `findings.json`. Open the HTML directly or serve it locally:
 
@@ -119,7 +125,7 @@ Default discovery also lists Cloud SQL instances, all-location GKE cluster confi
 
 Service-account email and numeric-ID aliases can remain separate across API and IAM-search records; complete metadata/policy correlation is not asserted. Functions v1/v2 retain their distinct CAI types, so first-generation configuration may appear in both representations and produce duplicate findings.
 
-SQL instances also receive [user metadata](https://docs.cloud.google.com/sql/docs/mysql/admin-api/rest/v1/users/list), with passwords/hash fields excluded by field selection and a local whitelist. Database listing retains describe-equivalent metadata; paginated BackupRun listings feed detail reads capped at 1000 records per instance, with explicit failure on truncation. No database/backup contents or restore operations are accessed. Deleted-instance retained backups and Backup and DR vault inventories remain gaps. User/database presence is not a vulnerability or evidence of an empty password.
+SQL instances also receive [user metadata](https://docs.cloud.google.com/sql/docs/mysql/admin-api/rest/v1/users/list), with passwords/hash fields excluded by field selection and a local whitelist. Database and paginated BackupRun listings retain reviewed metadata directly from list responses, avoiding redundant detail GETs; backup collection is capped at 1000 records per instance, with explicit failure on truncation. No database/backup contents or restore operations are accessed. Deleted-instance retained backups and Backup and DR vault inventories remain gaps. User/database presence is not a vulnerability or evidence of an empty password.
 
 `sql_hardening` flags explicitly disabled deletion protection and local password policy (known MySQL/PostgreSQL engines). Informational findings review zonal primaries, disabled engine-specific PITR on standard-backup primaries, and enabled MySQL policies with username-substring exclusion disabled or zero history on MySQL 8+. Missing/malformed settings are unknown; no universal password length or workload availability requirement is invented. SQL exposure checks suppress expired authorized-network entries and networks disabled by required connectors; malformed expiration is labeled unverified. Credential strength, effective reachability, failover and restoration remain untested.
 

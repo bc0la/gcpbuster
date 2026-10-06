@@ -346,9 +346,7 @@ func (f viewerServicesTransport) RoundTrip(r *http.Request) (*http.Response, err
 	case "sqladmin.googleapis.com/v1/projects/demo/instances/db/databases":
 		return respond(`{"items":[{"name":"application","project":"demo","instance":"db","charset":"utf8mb4","collation":"utf8mb4_0900_ai_ci","password":"VIEWER_PIPELINE_SECRET_DO_NOT_SAVE"}]}`)
 	case "sqladmin.googleapis.com/v1/projects/demo/instances/db/backupRuns":
-		return respond(`{"items":[{"id":"42","instance":"db"}]}`)
-	case "sqladmin.googleapis.com/v1/projects/demo/instances/db/backupRuns/42":
-		return respond(`{"id":"42","instance":"db","status":"SUCCESSFUL","type":"AUTOMATED","backupKind":"SNAPSHOT","error":{"message":"VIEWER_PIPELINE_SECRET_DO_NOT_SAVE"},"description":"VIEWER_PIPELINE_SECRET_DO_NOT_SAVE"}`)
+		return respond(`{"items":[{"id":"42","instance":"db","status":"SUCCESSFUL","type":"AUTOMATED","backupKind":"SNAPSHOT","error":{"message":"VIEWER_PIPELINE_SECRET_DO_NOT_SAVE"},"description":"VIEWER_PIPELINE_SECRET_DO_NOT_SAVE"}]}`)
 	case "container.googleapis.com/v1/projects/demo/locations/-/clusters":
 		return respond(`{"clusters":[{"name":"cluster","location":"us-central1","loggingService":"none","monitoringService":"none","legacyAbac":{"enabled":true},"nodePools":[{"name":"pool","config":{"kubeletConfig":{"insecureKubeletReadonlyPortEnabled":true}}}]}]}`)
 	case "run.googleapis.com/v1/projects/demo/locations":

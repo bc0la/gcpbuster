@@ -17,21 +17,24 @@ import (
 )
 
 type Client struct {
-	HTTP             *http.Client
-	TokenEnv         string
-	Impersonate      string
-	DNSChecks        bool
-	LookupHost       func(context.Context, string) ([]string, error)
-	RefreshConfig    bool
-	WorkspaceMembers bool
-	SecretCapture    *SecretCapture // Optional transient configuration samples; never serialized in Snapshot.
-	Concurrency      int            // Bound concurrent collection jobs; zero preserves serial library behavior.
-	Progress         func(ProgressEvent)
-	progressMu       sync.Mutex
-	mu               sync.Mutex
-	token            string
-	refresh          time.Time
-	viewerPolicy     viewerPolicyCache
+	HTTP                  *http.Client
+	TokenEnv              string
+	Impersonate           string
+	DNSChecks             bool
+	LookupHost            func(context.Context, string) ([]string, error)
+	RefreshConfig         bool
+	WorkspaceMembers      bool
+	SecretCapture         *SecretCapture // Optional transient configuration samples; never serialized in Snapshot.
+	Concurrency           int            // Bound concurrent collection jobs; zero preserves serial library behavior.
+	PerProjectConcurrency int            // Optional per-project cap within the global worker limit.
+	Progress              func(ProgressEvent)
+	progressMu            sync.Mutex
+	rateLimitMu           sync.Mutex
+	rateLimits            map[string]time.Time
+	mu                    sync.Mutex
+	token                 string
+	refresh               time.Time
+	viewerPolicy          viewerPolicyCache
 }
 
 // Explicit supported types avoid collecting unrelated payload-bearing resources
@@ -132,6 +135,7 @@ func (c *Client) get(ctx context.Context, endpoint string, q url.Values) (Object
 	}
 	h.Jar = nil
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	ctx = withRequestAttemptCounter(ctx)
 	for attempt := 0; attempt < 4; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+q.Encode(), nil)
 		if err != nil {
@@ -147,7 +151,7 @@ func (c *Client) get(ctx context.Context, endpoint string, q url.Values) (Object
 		if readErr != nil {
 			return nil, readErr
 		}
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 {
 			if attempt < 3 {
 				select {
 				case <-time.After(time.Duration(1<<attempt) * time.Second):

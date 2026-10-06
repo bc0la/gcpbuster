@@ -38,13 +38,16 @@ func (c *Client) ViewerCloud(ctx context.Context, scope string) Snapshot {
 		results[i] = make([]Snapshot, len(groups))
 	}
 	jobs = nil
-	// Round-robin projects rather than exhausting one project's families first.
+	// Diagonal round-robin mixes projects AND families rather than flooding one
+	// service endpoint with every project before moving to the next family.
 	// A single pool bounds all projects and independent service families together.
-	for j, family := range groups {
+	for round := range groups {
 		for i, project := range projects {
 			if project.id == "" {
 				continue
 			}
+			j := (round + i) % len(groups)
+			family := groups[j]
 			i, j, project, family := i, j, project, family
 			jobs = append(jobs, viewerTask{scope: project.number + " (" + project.id + ")", family: family.name, out: &results[i][j], run: func() {
 				for _, collect := range family.collect {
