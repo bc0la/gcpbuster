@@ -20,7 +20,11 @@ var viewerRoleNames = [...]string{"roles/viewer", "roles/resourcemanager.folderV
 // Current role definitions can include service-qualified IAM identifiers such
 // as iam.googleapis.com/workloadIdentityPools.list. Preserve exact strings;
 // accepting the syntax does not alias them to another permission or API.
-var viewerPermissionName = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*){2,}|[a-z][a-z0-9]*\.googleapis\.com/[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*)$`)
+// Permission identifiers include ordinary dotted names and domain-qualified
+// partner services, not just *.googleapis.com. Resource segments may contain
+// underscores (for example networkservices.route_views.get). This is syntax
+// validation only: names remain verbatim, without aliases or wildcard matching.
+var viewerPermissionName = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*){2,}|[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+/[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+)$`)
 
 type viewerPolicyCache struct {
 	mu          sync.Mutex

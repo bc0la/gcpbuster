@@ -79,12 +79,12 @@ func TestViewerAPIKeysPartialAndPermissionDenial(t *testing.T) {
 }
 
 func TestViewerQualifiedPermissionSyntaxPreservesExactNames(t *testing.T) {
-	for _, permission := range []string{"iam.roles.get", "iam.googleapis.com/workloadIdentityPools.list"} {
+	for _, permission := range []string{"iam.roles.get", "iam.googleapis.com/workloadIdentityPools.list", "cloudonefs.isiloncloud.com/clusters.get", "cloudvolumesgcp-api.netapp.com/volumes.list", "gcp.redisenterprise.com/databases.get", "networkservices.route_views.get", "example.googleapis.com/resources.children.get"} {
 		if !viewerPermissionName.MatchString(permission) {
 			t.Fatal("valid permission rejected", permission)
 		}
 	}
-	for _, permission := range []string{"*", "iam.googleapis.com/*", "iam.googleapis.com/../list", "iam.googleapis.com/pools/list", "iam.googleapis.com/pools.list\n", "iam.googleapis.com/pools.list?override=yes"} {
+	for _, permission := range []string{"*", "iam.googleapis.com/*", "iam.googleapis.com/../list", "iam.googleapis.com/pools/list", "iam.googleapis.com/pools.list\n", "iam.googleapis.com/pools.list?override=yes", "iam..googleapis.com/pools.list", "-iam.googleapis.com/pools.list", "iam-.googleapis.com/pools.list", "networkservices..get", "networkservices.route_views.get*"} {
 		if viewerPermissionName.MatchString(permission) {
 			t.Fatal("invalid permission accepted", permission)
 		}
@@ -94,7 +94,7 @@ func TestViewerQualifiedPermissionSyntaxPreservesExactNames(t *testing.T) {
 		if r.URL.Host != "iam.googleapis.com" || !strings.HasPrefix(r.URL.Path, "/v1/roles/") {
 			t.Fatal(r.URL)
 		}
-		b, _ := json.Marshal(Object{"name": strings.TrimPrefix(r.URL.Path, "/v1/"), "includedPermissions": []string{"apikeys.keys.list", "iam.googleapis.com/workloadIdentityPools.list"}})
+		b, _ := json.Marshal(Object{"name": strings.TrimPrefix(r.URL.Path, "/v1/"), "includedPermissions": []string{"apikeys.keys.list", "iam.googleapis.com/workloadIdentityPools.list", "cloudonefs.isiloncloud.com/clusters.get", "cloudvolumesgcp-api.netapp.com/volumes.list", "gcp.redisenterprise.com/databases.get", "networkservices.route_views.get"}})
 		return response(200, string(b)), nil
 	})}}
 	if err := c.requireViewerPermissions(context.Background(), "GET", "https://apikeys.googleapis.com/v2/projects/123/locations/global/keys", nil); err != nil {
@@ -102,5 +102,8 @@ func TestViewerQualifiedPermissionSyntaxPreservesExactNames(t *testing.T) {
 	}
 	if c.viewerPolicy.permissions["iam.workloadIdentityPools.list"] {
 		t.Fatal("invented permission alias")
+	}
+	if err := c.requireViewerPermissions(context.Background(), "GET", "https://cloudonefs.isiloncloud.com/clusters", nil); err == nil {
+		t.Fatal("permission syntax acceptance enabled an unreviewed request")
 	}
 }
