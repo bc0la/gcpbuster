@@ -16,14 +16,16 @@ import (
 )
 
 type BriefRow struct {
-	ID            int64  `json:"id"`
-	Category      string `json:"category"`
-	Project       string `json:"project"`
-	Module        string `json:"module"`
-	Severity      string `json:"severity"`
-	Resource      string `json:"resource"`
-	Title         string `json:"title"`
-	RawOutputPath string `json:"raw_output_path,omitempty"`
+	ID               int64  `json:"id"`
+	Category         string `json:"category"`
+	Project          string `json:"project"`
+	Module           string `json:"module"`
+	Severity         string `json:"severity"`
+	Resource         string `json:"resource"`
+	ResourceName     string `json:"resource_name"`
+	ResourceIdentity string `json:"resource_identity"`
+	Title            string `json:"title"`
+	RawOutputPath    string `json:"raw_output_path,omitempty"`
 }
 type QueryRow struct {
 	Row
@@ -183,6 +185,7 @@ func APIHandler(db *sql.DB) http.Handler {
 			var row QueryRow
 			err = db.QueryRowContext(r.Context(), `SELECT id,project_id,module,severity,resource_name,title,detail_json,COALESCE(raw_output_path,'') FROM findings WHERE id=?`, id).Scan(&row.ID, &row.Project, &row.Module, &row.Severity, &row.Resource, &row.Title, &row.Detail, &row.RawOutputPath)
 			row.Category = checks.CategoryOf(row.Module)
+			row.ResourceName, row.ResourceIdentity = resourceMetadataFromDetail(row.Resource, row.Module, row.Detail)
 			if !engagement.ValidSecretArtifactPath(row.RawOutputPath) {
 				row.RawOutputPath = ""
 			}
@@ -220,7 +223,9 @@ func queryFindings(ctx context.Context, db *sql.DB, q url.Values) (any, error) {
 		return nil, err
 	}
 	args = append(args, p.PageSize, (p.Page-1)*p.PageSize)
-	rows, err := db.QueryContext(ctx, `SELECT id,project_id,module,severity,resource_name,title,COALESCE(raw_output_path,'') FROM findings WHERE `+where+` ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,id LIMIT ? OFFSET ?`, args...)
+	// Materialize only selected IDs before inspecting provenance JSON. Sorting
+	// a large engagement never parses every finding's potentially large detail.
+	rows, err := db.QueryContext(ctx, `WITH selected AS MATERIALIZED (SELECT id FROM findings WHERE `+where+` ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,id LIMIT ? OFFSET ?) SELECT f.id,project_id,module,severity,resource_name,title,COALESCE(raw_output_path,''),COALESCE(`+resourceCandidateSQL+`,'') FROM selected JOIN findings f ON f.id=selected.id ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,f.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -228,10 +233,12 @@ func queryFindings(ctx context.Context, db *sql.DB, q url.Values) (any, error) {
 	items := []BriefRow{}
 	for rows.Next() {
 		var row BriefRow
-		if err := rows.Scan(&row.ID, &row.Project, &row.Module, &row.Severity, &row.Resource, &row.Title, &row.RawOutputPath); err != nil {
+		var provenance string
+		if err := rows.Scan(&row.ID, &row.Project, &row.Module, &row.Severity, &row.Resource, &row.Title, &row.RawOutputPath, &provenance); err != nil {
 			return nil, err
 		}
 		row.Category = checks.CategoryOf(row.Module)
+		row.ResourceName, row.ResourceIdentity = resourceMetadata(row.Resource, provenance)
 		if !engagement.ValidSecretArtifactPath(row.RawOutputPath) {
 			row.RawOutputPath = ""
 		}

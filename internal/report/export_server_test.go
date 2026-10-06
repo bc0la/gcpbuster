@@ -183,8 +183,8 @@ func TestAssetDownloadUsesReviewedProvenanceNotCredentialFields(t *testing.T) {
 		{"secrets_scan", "//gcpbuster.googleapis.com/secretScan/opaque", `{"evidence":{"source":"//run.googleapis.com/projects/demo/locations/us-central1/services/app","match":"SYNTHETIC_ACTUAL_TOKEN"}}`},
 		{"public_iam", "//storage.googleapis.com/buckets/legitimate/permission-analysis/0123456789abcdef01234567", `{}`},
 		{"iam_permissions", "projects/demo/permission-analysis/0123456789abcdef01234567", `{"asset_type":"gcpbuster.googleapis.com/PermissionGrant","evidence":{"resource":"//storage.googleapis.com/buckets/legitimate"}}`},
-		{"secrets_scan", "SYNTHETIC_ACTUAL_TOKEN", `{"evidence":{"source":"https://evil.example/token=SYNTHETIC_ACTUAL_TOKEN","value":"//storage.googleapis.com/buckets/not-an-asset"}}`},
-		{"configuration_plaintext", "javascript:alert(1)", `{"evidence":{"source":"SYNTHETIC_ACTUAL_TOKEN","value":"SYNTHETIC_ACTUAL_TOKEN"}}`},
+		{"secrets_scan", "", `{"evidence":{"source":"https://evil.example/token=SYNTHETIC_ACTUAL_TOKEN","value":"//storage.googleapis.com/buckets/not-an-asset"}}`},
+		{"configuration_plaintext", "invalid\nresource", `{"evidence":{"source":"SYNTHETIC_ACTUAL_TOKEN","value":"SYNTHETIC_ACTUAL_TOKEN"}}`},
 		{"unknown_module", "//gcpbuster.googleapis.com/findings/opaque", `{"evidence":{"source":"//storage.googleapis.com/buckets/not-reviewed","value":"SYNTHETIC_ACTUAL_TOKEN"}}`},
 	} {
 		if _, err := created.DB().Exec(`INSERT INTO findings(project_id,module,severity,resource_name,title,detail_json,raw_output_path,created_at) VALUES('demo',?,'info',?,'SYNTHETIC_ACTUAL_TOKEN',?,'javascript:alert(1)','2026-10-06T00:00:00Z')`, tc.module, tc.resource, tc.detail); err != nil {

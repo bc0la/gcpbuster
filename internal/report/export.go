@@ -134,6 +134,7 @@ func exportJSON(ctx context.Context, db *sql.DB, w io.Writer, where string, args
 		}
 		row.Detail = json.RawMessage(detail)
 		row.Category = checks.CategoryOf(row.Module)
+		row.ResourceName, row.ResourceIdentity = resourceMetadataFromDetail(row.Resource, row.Module, detail)
 		if !engagement.ValidSecretArtifactPath(row.RawOutputPath) {
 			row.RawOutputPath = ""
 		}

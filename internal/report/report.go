@@ -29,13 +29,15 @@ var serverPage string
 var tmpl = template.Must(template.New("report").Parse(page))
 
 type Row struct {
-	Project       string `json:"project"`
-	Module        string `json:"module"`
-	Severity      string `json:"severity"`
-	Resource      string `json:"resource"`
-	Title         string `json:"title"`
-	Detail        string `json:"detail"`
-	RawOutputPath string `json:"raw_output_path,omitempty"`
+	Project          string `json:"project"`
+	Module           string `json:"module"`
+	Severity         string `json:"severity"`
+	Resource         string `json:"resource"`
+	ResourceName     string `json:"resource_name"`
+	ResourceIdentity string `json:"resource_identity"`
+	Title            string `json:"title"`
+	Detail           string `json:"detail"`
+	RawOutputPath    string `json:"raw_output_path,omitempty"`
 }
 type Run struct{ Project, Module, Status, Error string }
 type Section struct {
@@ -65,6 +67,7 @@ func Read(db *sql.DB) (Data, []Row, error) {
 		if !engagement.ValidSecretArtifactPath(r.RawOutputPath) {
 			r.RawOutputPath = ""
 		}
+		r.ResourceName, r.ResourceIdentity = resourceMetadataFromDetail(r.Resource, r.Module, r.Detail)
 		all = append(all, r)
 	}
 	err = rows.Err()
