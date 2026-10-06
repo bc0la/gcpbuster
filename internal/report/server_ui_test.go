@@ -38,7 +38,7 @@ class Element {
  get firstChild(){return this.children[0]}
  set innerHTML(v){throw new Error('Untrusted innerHTML is forbidden')}
 }
-const ids={};for(const id of ['categories','summary','module','project','severity','page-size','query','status','findings','findings-table','page-count','previous','next','filters','reset','coverage-panel','coverage','runs-panel','runs'])ids[id]=new Element(id);
+const ids={};for(const id of ['categories','summary','module','project','severity','page-size','query','status','findings','findings-table','page-count','previous','next','filters','reset','coverage-panel','coverage','runs-panel','runs','export-json','export-assets'])ids[id]=new Element(id);
 ids['page-size'].value='50';
 const calls=[],timers=new Map();let nextTimer=0;
 const context={document:{getElementById:id=>ids[id],createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment')},URLSearchParams,AbortController,console,
@@ -61,6 +61,9 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
  ids['coverage-panel'].open=true;await ids['coverage-panel'].events.toggle();await settle();const pager=ids.coverage.children.at(-1);assert.equal(pager.children[2].disabled,false);await pager.children[2].events.click();await settle();assert(calls.includes('/api/coverage?page=2&page_size=50'));
  ids['runs-panel'].open=true;await ids['runs-panel'].events.toggle();await settle();assert.match(ids.runs.children[0].textContent,/assessment \/ fixture • completed/);
  assert(vm.runInContext("artifactLink('../engagement.db')===null && artifactLink('https://evil.example')===null",context));
+ ids.module.value='fixture';ids.project.value='projects/123';ids.severity.value='HIGH';ids.query.value='<img onerror=bad>& secret';const beforeExport=calls.length;ids.query.events.input();
+ for(const [id,path] of [['export-json','/api/export/json'],['export-assets','/api/export/assets']]){const url=new URL(ids[id].href,'http://localhost');assert.equal(url.origin,'http://localhost');assert.equal(url.pathname,path);assert.equal(url.searchParams.get('category'),'best_practices');assert.equal(url.searchParams.get('module'),'fixture');assert.equal(url.searchParams.get('project'),'projects/123');assert.equal(url.searchParams.get('severity'),'HIGH');assert.equal(url.searchParams.get('q'),'<img onerror=bad>& secret');assert.equal(url.searchParams.has('page'),false);assert.equal(url.searchParams.has('page_size'),false);await ids[id].events.click();}
+ assert.equal(calls.length,beforeExport);ids.query.value='immediate click query';await ids['export-json'].events.click();assert.equal(new URL(ids['export-json'].href,'http://localhost').searchParams.get('q'),'immediate click query');assert.equal(calls.length,beforeExport);
  const originalFetch=context.fetch;let releaseStale;context.fetch=async(path,options)=>{const response=await originalFetch(path,options);if(path.includes('q=stale')){await new Promise(resolve=>releaseStale=resolve);return {ok:true,json:async()=>({findings:[],total:99,page:1,page_size:50})}}return response;};
  const stale=vm.runInContext("$('query').value='stale';loadPage()",context);await settle();await vm.runInContext("$('query').value='newest';loadPage()",context);releaseStale();await stale;assert.equal(vm.runInContext('state.total',context),1);assert.equal(ids.findings.children.length,2);
  assert(calls.every(x=>x.startsWith('/api/')));assert(calls.filter(x=>x.startsWith('/api/findings?')).every(x=>x.includes('page_size=50')));

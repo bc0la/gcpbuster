@@ -254,6 +254,10 @@ func openEngagement(dir string, readOnly bool) (*Engagement, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if readOnly {
+		// A long export cursor must not monopolize the report viewer's reads.
+		db.SetMaxOpenConns(4)
+	}
 	if !readOnly {
 		if _, err := db.Exec(schema); err != nil {
 			db.Close()

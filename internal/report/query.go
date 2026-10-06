@@ -116,6 +116,7 @@ func findingFilter(q url.Values) (string, []any, error) {
 // APIHandler reads the existing engagement database directly. List endpoints
 // fetch bounded pages and omit large secret evidence until a detail is opened.
 func APIHandler(db *sql.DB) http.Handler {
+	exports := ExportHandler(db)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -130,6 +131,10 @@ func APIHandler(db *sql.DB) http.Handler {
 		}
 		if len(r.URL.RawQuery) > 8192 {
 			http.Error(w, "query too long", 400)
+			return
+		}
+		if r.URL.Path == "/api/export/json" || r.URL.Path == "/api/export/assets" {
+			exports.ServeHTTP(w, r)
 			return
 		}
 		q, parseErr := url.ParseQuery(r.URL.RawQuery)

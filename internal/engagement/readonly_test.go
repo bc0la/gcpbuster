@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/bc0la/gcpbuster/internal/findings"
 )
@@ -31,6 +32,18 @@ func TestOpenReadOnlyExistingEngagement(t *testing.T) {
 	if err := e.DB().QueryRow("SELECT COUNT(*) FROM findings").Scan(&count); err != nil || count != 1 {
 		t.Fatal(count, err)
 	}
+	// Keep an export-like cursor open while another report query is served.
+	rows, err := e.DB().Query("SELECT id FROM findings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := e.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM findings").Scan(&count); err != nil || count != 1 {
+		rows.Close()
+		t.Fatal("report query blocked behind export cursor", count, err)
+	}
+	rows.Close()
 	if err := e.Write(context.Background(), findings.Finding{Title: "must not write"}); err == nil {
 		t.Fatal("read-only database accepted a write")
 	}
